@@ -117,9 +117,10 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     const c = init(box.current!, { locale: 'fr-FR' })!
     chart.current = c
     c.setOffsetRightDistance(80)
+    c.setPaneOptions({ id: 'candle_pane', minHeight: 180 }) // le prix garde toujours la place principale
     props.initialIndicators.forEach((id) => {
       const main = INDICATORS.find((i) => i.id === id)?.main
-      const pane = main ? c.createIndicator(id, true, { id: 'candle_pane' }) : c.createIndicator(id, false, { height: id === 'VOL' ? 80 : 110 })
+      const pane = main ? c.createIndicator(id, true, { id: 'candle_pane' }) : c.createIndicator(id, false, { height: id === 'VOL' ? 70 : 90, minHeight: 40 })
       indicatorPanes.current.set(id, pane ?? 'candle_pane')
     })
     const ro = new ResizeObserver(() => c.resize())
@@ -419,7 +420,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
         map.delete(id)
       } else {
         const main = INDICATORS.find((i) => i.id === id)?.main
-        const pane = main ? c.createIndicator(id, true, { id: 'candle_pane' }) : c.createIndicator(id, false, { height: 110 })
+        const pane = main ? c.createIndicator(id, true, { id: 'candle_pane' }) : c.createIndicator(id, false, { height: 90, minHeight: 40 })
         map.set(id, pane ?? 'candle_pane')
       }
       return [...map.keys()]

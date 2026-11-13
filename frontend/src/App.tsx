@@ -290,6 +290,10 @@ export default function App(): JSX.Element {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const tag = (e.target as HTMLElement).tagName
+      if (e.key === 'Escape') {
+        setMenu(null)
+        setToolGroup(null)
+      }
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
       const p = pane()
       if (e.altKey && ['t', 'f', 'h', 'v'].includes(e.key.toLowerCase())) {

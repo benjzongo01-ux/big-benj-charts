@@ -1,6 +1,8 @@
 // Outils de dessin : ceux fournis par la bibliothèque + des outils maison (formes, mesure, position…).
 import { registerLocale, registerOverlay, type Coordinate, type OverlayFigure, type OverlayTemplate } from 'klinecharts'
 
+import { EXTRA_INDICATORS, EXTRA_TOOLS, registerExtraIndicators, registerExtraTools } from './extras'
+
 const BLUE = '#2962ff'
 const GREEN = '#26a69a'
 const RED = '#ef5350'
@@ -131,6 +133,8 @@ export function registerTools(): void {
   if (done) return
   done = true
   templates.forEach(registerOverlay)
+  registerExtraTools()
+  registerExtraIndicators()
   registerLocale('fr-FR', {
     time: 'Date : ', open: 'Ouv. : ', high: 'Haut : ', low: 'Bas : ', close: 'Clôt. : ', volume: 'Volume : ',
     change: 'Variation : ', turnover: 'Montant : ',
@@ -188,6 +192,13 @@ export const TOOL_GROUPS: ToolGroup[] = [
   },
 ]
 
+// Outils complémentaires (extras.ts) ajoutés à leur catégorie.
+for (const [label, tools] of Object.entries(EXTRA_TOOLS)) {
+  const group = TOOL_GROUPS.find((g) => g.label === label)
+  if (group) group.tools.push(...tools)
+  else TOOL_GROUPS.splice(TOOL_GROUPS.length - 2, 0, { label, icon: tools[0].icon, tools })
+}
+
 /** Outils qui demandent un texte à l'utilisateur avant d'être posés. */
 export const TEXT_TOOLS = new Set(['textNote', 'simpleAnnotation', 'simpleTag'])
 
@@ -221,3 +232,5 @@ export const INDICATORS: { id: string; label: string; main: boolean }[] = [
   { id: 'PVT', label: 'Price Volume Trend', main: false },
   { id: 'AVP', label: 'Prix moyen', main: false },
 ]
+INDICATORS.push(...EXTRA_INDICATORS)
+INDICATORS.sort((a, b) => Number(b.main) - Number(a.main) || a.label.localeCompare(b.label, 'fr'))
