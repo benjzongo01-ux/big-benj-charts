@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS settings (
     data TEXT NOT NULL,
     updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS alerts (
+    user_id INTEGER PRIMARY KEY,
+    data TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 """
 
 
@@ -152,9 +157,23 @@ def set_settings(user_id: int, data: dict) -> None:
     c.commit()
 
 
+# --- Alertes de prix (la liste complète de l'utilisateur) ------------------
+def get_alerts(user_id: int) -> list:
+    row = conn().execute("SELECT data FROM alerts WHERE user_id=?", (user_id,)).fetchone()
+    return json.loads(row["data"]) if row else []
+
+
+def set_alerts(user_id: int, data: list) -> None:
+    c = conn()
+    c.execute("INSERT INTO alerts (user_id, data, updated_at) VALUES (?,?,?) "
+              "ON CONFLICT (user_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
+              (user_id, json.dumps(data), now()))
+    c.commit()
+
+
 # En ligne, les mêmes fonctions écrivent dans Firestore : le disque du serveur gratuit est effacé à chaque redémarrage.
 if FIREBASE_ENABLED:
     from .db_firestore import (  # noqa: E402,F401,F811
-        add_journal, clear_journal, delete_strategy, get_drawings, get_settings, init,
-        list_journal, list_strategies, save_strategy, set_drawings, set_settings,
+        add_journal, clear_journal, delete_strategy, get_alerts, get_drawings, get_settings, init,
+        list_journal, list_strategies, save_strategy, set_alerts, set_drawings, set_settings,
     )

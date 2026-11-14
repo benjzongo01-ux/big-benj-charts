@@ -294,6 +294,19 @@ def journal_clear(user_id: auth.UserId = User) -> dict:
     return {"ok": True}
 
 
+@app.get("/api/alerts")
+def alerts_get(user_id: auth.UserId = User) -> list:
+    return db.get_alerts(user_id)
+
+
+@app.put("/api/alerts")
+def alerts_put(data: list = Body(...), user_id: auth.UserId = User) -> dict:
+    if len(data) > 200:
+        raise HTTPException(400, "200 alertes au maximum.")
+    db.set_alerts(user_id, data)
+    return {"ok": True}
+
+
 @app.get("/api/settings")
 def settings_get(user_id: auth.UserId = User) -> dict:
     return db.get_settings(user_id)

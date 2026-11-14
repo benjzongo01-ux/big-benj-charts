@@ -159,6 +159,18 @@ export default function BottomPanel({ config, session, replay, goTo, onMessage }
     drag.current = null
   }
 
+  // « Ajouter un ordre… » depuis le clic droit du graphique : ouvre l'onglet Trading avec le prix prérempli.
+  const [preset, setPreset] = useState<{ price: number; n: number } | null>(null)
+  useEffect(() => {
+    const onOrder = (e: Event): void => {
+      setTab(1)
+      setOpen(true)
+      setPreset({ price: (e as CustomEvent<{ price: number }>).detail.price, n: Date.now() })
+    }
+    window.addEventListener('bbc-order', onOrder)
+    return () => window.removeEventListener('bbc-order', onOrder)
+  }, [])
+
   const [strategies, setStrategies] = useState<StrategyList | null>(null)
   const [code, setCode] = useState('')
   const [name, setName] = useState('Ma stratégie')
@@ -195,7 +207,7 @@ export default function BottomPanel({ config, session, replay, goTo, onMessage }
       </div>
       <div className="bottom-body" hidden={!open}>
         <div hidden={tab !== 0} className="fill"><Backtest config={config} strategies={strategies} code={code} goTo={goTo} onMessage={onMessage} /></div>
-        {tab === 1 && <Trading config={config} session={session} replay={replay} goTo={goTo} onMessage={onMessage} />}
+        {tab === 1 && <Trading config={config} session={session} replay={replay} goTo={goTo} onMessage={onMessage} preset={preset} />}
         {tab === 2 && (
           <div className="editor">
             <div className="editor-bar">
@@ -365,7 +377,7 @@ function Backtest(props: { config: PaneConfig; strategies: StrategyList | null; 
 }
 
 // ---------------------------------------------------------------- trading simulé
-function Trading({ config, session, replay, goTo, onMessage }: Props): JSX.Element {
+function Trading({ config, session, replay, goTo, onMessage, preset }: Props & { preset: { price: number; n: number } | null }): JSX.Element {
   useSyncExternalStore(session.subscribe, session.getVersion)
   const [type, setType] = useState<'market' | 'limit' | 'stop'>('market')
   const [price, setPrice] = useState('')
@@ -375,6 +387,14 @@ function Trading({ config, session, replay, goTo, onMessage }: Props): JSX.Eleme
   const [qty, setQty] = useState('')
   const d = config.precision
   const stats = session.stats()
+  const [spread, setSpread] = useState(String(session.spread))
+  const [quick, setQuick] = useState(session.quickQty ? String(session.quickQty) : '')
+  useEffect(() => {
+    if (!preset) return
+    setType('limit')
+    setPrice(preset.price.toFixed(d))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset?.n])
 
   const send = (side: 1 | -1): void => {
     const entry = type === 'market' ? session.price : num(price) ?? 0
@@ -408,6 +428,12 @@ function Trading({ config, session, replay, goTo, onMessage }: Props): JSX.Eleme
           <button className="sell" onClick={() => send(-1)}>Vendre</button>
         </div>
         <button onClick={() => session.closeAll()} disabled={!session.positions.length}>Tout clôturer</button>
+        <label title="Écart simulé entre le prix d'achat et le prix de vente, en unités de prix">Spread simulé
+          <input value={spread} onChange={(e) => { setSpread(e.target.value); session.setTradeOptions(num(e.target.value) ?? 0, session.quickQty) }} />
+        </label>
+        <label title="Quantité des boutons VENTE / ACHAT du graphique (vide = 10 % du capital)">Quantité rapide
+          <input value={quick} placeholder="auto" onChange={(e) => { setQuick(e.target.value); session.setTradeOptions(session.spread, num(e.target.value) ?? 0) }} />
+        </label>
       </div>
       <div className="trade-lists">
         <div className="cards">

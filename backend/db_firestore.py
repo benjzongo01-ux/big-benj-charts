@@ -96,3 +96,14 @@ def get_settings(user_id) -> dict:
 
 def set_settings(user_id, data: dict) -> None:
     _user(user_id).set({"settings": json.dumps(data), "updated_at": now()}, merge=True)
+
+
+# --- Alertes de prix -----------------------------------------------------
+def get_alerts(user_id) -> list:
+    doc = _user(user_id).get()
+    raw = (doc.to_dict() or {}).get("alerts") if doc.exists else None
+    return json.loads(raw) if raw else []
+
+
+def set_alerts(user_id, data: list) -> None:
+    _user(user_id).set({"alerts": json.dumps(data), "updated_at": now()}, merge=True)

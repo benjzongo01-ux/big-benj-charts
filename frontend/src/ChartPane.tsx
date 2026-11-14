@@ -1,17 +1,13 @@
-// Un graphique : chargement des données, temps réel, dessins, indicateurs et mode replay.
+// Un graphique : chargement des données, temps réel, dessins, alertes, indicateurs et mode replay.
 // Tout le rendu passe par un canvas (klinecharts) ; React ne redessine jamais les bougies.
-import { dispose, init, type Chart, type OverlayCreate, type OverlayEvent } from 'klinecharts'
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
-import { api, fetchCandles, openStream, TF_MS, type Bar } from './api'
+import { dispose, init, type ActionType, type Chart, type OverlayCreate, type OverlayEvent } from 'klinecharts'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
+import { api, fetchCandles, fmt, openStream, TF_LABEL, TF_MS, type Bar } from './api'
 import { INDICATORS, registerTools, TEXT_TOOLS } from './overlays'
 import type { TradingSession } from './session'
+import { alerts, quotes, type PaneConfig } from './stores'
 
-export interface PaneConfig {
-  source: string
-  symbol: string
-  tf: string
-  precision: number
-}
+export type { PaneConfig }
 
 export interface ReplayState {
   active: boolean
@@ -22,16 +18,30 @@ export interface ReplayState {
   picking: boolean
 }
 
+export interface SavedDrawing {
+  name: string
+  points: { timestamp?: number; value?: number }[]
+  extendData?: unknown
+}
+
 export interface PaneHandle {
   toggleIndicator: (id: string) => string[]
   indicators: () => string[]
-  draw: (tool: string) => void
+  draw: (tool: string, data?: unknown) => void
   cancelDraw: () => void
   removeSelected: () => void
   clearDrawings: () => void
+  restoreDrawings: (list: SavedDrawing[]) => void
+  addHorizontalLine: (price: number) => void
   setFlags: (flags: { magnet?: boolean; lock?: boolean; visible?: boolean }) => void
   screenshot: () => void
   goTo: (ts: number) => void
+  goToDate: (ts: number) => Promise<void>
+  setRange: (ms: number) => void
+  reload: () => void
+  zoom: (factor: number) => void
+  pointerPrice: () => number | null
+  lastPrice: () => number
   pickReplayStart: () => void
   enterReplay: (ts: number) => Promise<void>
   exitReplay: () => void
@@ -51,16 +61,15 @@ interface Props {
   onActivate: () => void
   onReplay: (s: ReplayState) => void
   onMessage: (text: string, kind?: 'error' | 'info') => void
-}
-
-interface SavedDrawing {
-  name: string
-  points: { timestamp?: number; value?: number }[]
-  extendData?: unknown
+  /** Un dessin a été ajouté, déplacé ou supprimé (pour annuler / rétablir). */
+  onDrawings: (source: string, symbol: string, before: SavedDrawing[], after: SavedDrawing[]) => void
+  /** Clic droit sur le graphique : position de la souris et prix visé. */
+  onContext: (at: { x: number; y: number; price: number }) => void
 }
 
 const IDLE: ReplayState = { active: false, playing: false, time: 0, left: 0, speed: 4, picking: false }
 const REPLAY_MAX_BARS = 60_000
+const ALERT_COLOR = '#f5b800'
 
 function themeStyles(theme: 'dark' | 'light', chartType: string): Record<string, unknown> {
   const dark = theme === 'dark'
@@ -77,7 +86,8 @@ function themeStyles(theme: 'dark' | 'light', chartType: string): Record<string,
       bar,
       area: { lineColor: '#2962ff', backgroundColor: [{ offset: 0, color: 'rgba(41,98,255,0.01)' }, { offset: 1, color: 'rgba(41,98,255,0.25)' }] },
       priceMark: { high: { color: text }, low: { color: text } },
-      tooltip: { text: { color: text } },
+      // La légende O/H/B/C est affichée par notre propre en-tête : ici, une ligne vide réserve sa place.
+      tooltip: { custom: [{ title: ' ', value: ' ' }], text: { color: text } },
     },
     indicator: { tooltip: { text: { color: text } } },
     xAxis: axis,
@@ -90,9 +100,28 @@ function themeStyles(theme: 'dark' | 'light', chartType: string): Record<string,
   }
 }
 
+/** Boutons VENTE / ACHAT rapides avec le spread, dans l'en-tête du graphique actif. */
+function QuickTrade({ session, precision, onMessage }: { session: TradingSession; precision: number; onMessage: Props['onMessage'] }): JSX.Element {
+  useSyncExternalStore(session.subscribe, session.getVersion)
+  const order = (side: 1 | -1): void => {
+    const size = session.defaultSize()
+    const err = session.market(side, size, null, null)
+    if (err) onMessage(err, 'error')
+    else onMessage(`${side === 1 ? 'Achat' : 'Vente'} simulé de ${fmt(size, 4)} ${session.context.symbol} à ${fmt(side === 1 ? session.ask : session.bid, precision)}`)
+  }
+  return (
+    <span className="quick" onMouseDown={(e) => e.stopPropagation()}>
+      <button className="q-sell" onClick={() => order(-1)} title="Vendre au marché (simulation)"><b>{fmt(session.bid, precision)}</b><small>VENTE</small></button>
+      <span className="q-spread" title="Spread simulé (réglable dans l'onglet Trading)">{fmt(session.spread, precision)}</span>
+      <button className="q-buy" onClick={() => order(1)} title="Acheter au marché (simulation)"><b>{fmt(session.ask, precision)}</b><small>ACHAT</small></button>
+    </span>
+  )
+}
+
 const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
-  const { config, theme, chartType, active, session, onActivate, onReplay, onMessage } = props
+  const { config, theme, chartType, active, session, onActivate, onReplay, onMessage, onDrawings, onContext } = props
   const box = useRef<HTMLDivElement>(null)
+  const head = useRef<HTMLSpanElement>(null)
   const chart = useRef<Chart | null>(null)
   const [loading, setLoading] = useState(true)
   const [reload, setReload] = useState(0)
@@ -100,16 +129,44 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
   // État impératif (aucun re-rendu React pendant la lecture ou le temps réel).
   const cfg = useRef(config)
   cfg.current = config
-  const cb = useRef({ onReplay, onMessage, onActivate, session, active })
-  cb.current = { onReplay, onMessage, onActivate, session, active }
+  const cb = useRef({ onReplay, onMessage, onActivate, onDrawings, onContext, session, active })
+  cb.current = { onReplay, onMessage, onActivate, onDrawings, onContext, session, active }
   const drawings = useRef(new Map<string, string>())      // id -> nom de l'outil
   const indicatorPanes = useRef(new Map<string, string>()) // indicateur -> id de fenêtre
   const flags = useRef({ magnet: false, lock: false, visible: true })
   const selected = useRef<string | null>(null)
   const drawingId = useRef<string | null>(null)
   const saveTimer = useRef(0)
+  const snapshot = useRef('[]')       // dernier état connu des dessins (pour annuler / rétablir)
+  const restoring = useRef(false)     // vrai pendant un annuler / rétablir : pas de nouvelle entrée d'historique
+  const pointer = useRef<{ x: number; y: number } | null>(null)
+  const hovering = useRef(false)
+  const pendingRange = useRef<number | null>(null)
   const stopStream = useRef<(() => void) | null>(null)
   const replay = useRef({ active: false, playing: false, bars: [] as Bar[], idx: 0, speed: 4, acc: 0, last: 0, raf: 0, picking: false, notified: 0 })
+
+  // ---------------------------------------------------------------- en-tête O / H / B / C
+  const showBar = (bar: Bar | undefined, prev: Bar | undefined): void => {
+    const el = head.current
+    if (!el) return
+    if (!bar) {
+      el.textContent = ''
+      return
+    }
+    const d = cfg.current.precision
+    const ref0 = prev ? prev.close : bar.open
+    const diff = bar.close - ref0
+    const pct = ref0 ? (diff / ref0) * 100 : 0
+    const cls = bar.close >= bar.open ? 'up' : 'down'
+    const v = (label: string, n: number): string => `<i>${label}</i><b class="${cls}">${fmt(n, d)}</b>`
+    // Uniquement des nombres formatés : aucun texte venant de l'extérieur n'entre dans ce HTML.
+    el.innerHTML = `${v('O', bar.open)}${v('H', bar.high)}${v('B', bar.low)}${v('C', bar.close)}`
+      + `<b class="${diff >= 0 ? 'up' : 'down'}">${diff >= 0 ? '+' : ''}${fmt(diff, d)} (${diff >= 0 ? '+' : ''}${pct.toFixed(2)} %)</b>`
+  }
+  const showLast = (): void => {
+    const list = chart.current?.getDataList() ?? []
+    showBar(list[list.length - 1] as Bar | undefined, list[list.length - 2] as Bar | undefined)
+  }
 
   // ---------------------------------------------------------------- création du graphique
   useEffect(() => {
@@ -123,6 +180,15 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       const pane = main ? c.createIndicator(id, true, { id: 'candle_pane' }) : c.createIndicator(id, false, { height: id === 'VOL' ? 70 : 90, minHeight: 40 })
       indicatorPanes.current.set(id, pane ?? 'candle_pane')
     })
+    c.subscribeAction('onCrosshairChange' as ActionType, (data?: { kLineData?: Bar; dataIndex?: number }) => {
+      if (data?.kLineData && data.dataIndex !== undefined) {
+        hovering.current = true
+        showBar(data.kLineData, c.getDataList()[data.dataIndex - 1] as Bar | undefined)
+      } else {
+        hovering.current = false
+        showLast()
+      }
+    })
     const ro = new ResizeObserver(() => c.resize())
     ro.observe(box.current!)
     return () => {
@@ -131,6 +197,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       indicatorPanes.current.clear()
       chart.current = null
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
@@ -139,19 +206,32 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
   }, [theme, chartType])
 
   // ---------------------------------------------------------------- dessins
+  const collect = (): SavedDrawing[] => {
+    const c = chart.current
+    const data: SavedDrawing[] = []
+    if (!c) return data
+    drawings.current.forEach((name, id) => {
+      if (id === drawingId.current) return // dessin en cours de tracé : pas encore un vrai dessin
+      const o = c.getOverlayById(id)
+      if (o) data.push({ name, points: o.points.map((p) => ({ timestamp: p.timestamp, value: p.value })), extendData: o.extendData })
+    })
+    return data
+  }
+
   const scheduleSave = (): void => {
     window.clearTimeout(saveTimer.current)
     const { source, symbol } = cfg.current
     saveTimer.current = window.setTimeout(() => {
-      const c = chart.current
-      if (!c) return
-      const data: SavedDrawing[] = []
-      drawings.current.forEach((name, id) => {
-        const o = c.getOverlayById(id)
-        if (o) data.push({ name, points: o.points.map((p) => ({ timestamp: p.timestamp, value: p.value })), extendData: o.extendData })
-      })
+      if (!chart.current) return
+      const data = collect()
+      const after = JSON.stringify(data)
+      if (after !== snapshot.current) {
+        if (!restoring.current) cb.current.onDrawings(source, symbol, JSON.parse(snapshot.current) as SavedDrawing[], data)
+        snapshot.current = after
+      }
+      restoring.current = false
       void api(`/api/drawings?source=${encodeURIComponent(source)}&symbol=${encodeURIComponent(symbol)}`, 'PUT', data).catch(() => undefined)
-    }, 400)
+    }, 300)
   }
 
   const overlayEvents = (): Partial<OverlayCreate> => ({
@@ -177,6 +257,8 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       scheduleSave()
       return false
     },
+    // Le clic droit ouvre notre menu : il ne supprime plus le dessin (Suppr le fait).
+    onRightClick: () => true,
   })
 
   const addDrawing = (o: OverlayCreate): string | null => {
@@ -197,10 +279,24 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     const c = chart.current
     const ids = [...drawings.current.keys()]
     drawings.current.clear()
+    drawingId.current = null
     ids.forEach((id) => c?.removeOverlay(id))
   }
 
   // ---------------------------------------------------------------- lignes d'ordres (trading)
+  const priceLine = (group: string, value: number, text: string, color: string, locked: boolean, onMove?: (v: number) => void): void => {
+    chart.current?.createOverlay({
+      name: 'tradeLine', groupId: group, lock: locked,
+      points: [{ timestamp: cb.current.session.time || Date.now(), value }], extendData: { text, color },
+      onPressedMoveEnd: (e: OverlayEvent) => {
+        const v = e.overlay.points[0]?.value
+        if (v !== undefined && onMove) onMove(v)
+        return false
+      },
+      onRightClick: () => true,
+    })
+  }
+
   useEffect(() => {
     const sync = (): void => {
       const c = chart.current
@@ -208,25 +304,13 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       c.removeOverlay({ groupId: 'trade' })
       const s = cb.current.session
       if (!cb.current.active || s.context.symbol !== cfg.current.symbol) return
-      const t = s.time || Date.now()
-      const line = (value: number, text: string, color: string, locked: boolean, onMove?: (v: number) => void): void => {
-        c.createOverlay({
-          name: 'tradeLine', groupId: 'trade', lock: locked, points: [{ timestamp: t, value }], extendData: { text, color },
-          onPressedMoveEnd: (e: OverlayEvent) => {
-            const v = e.overlay.points[0]?.value
-            if (v !== undefined && onMove) onMove(v)
-            return false
-          },
-          onRightClick: () => true,
-        })
-      }
       const d = cfg.current.precision
       s.positions.forEach((p) => {
-        line(p.entry, `${p.side === 1 ? 'Achat' : 'Vente'} ${p.size.toFixed(4)} @ ${p.entry.toFixed(d)}`, '#2962ff', true)
-        if (p.sl !== null) line(p.sl, `Stop ${p.sl.toFixed(d)}`, '#ef5350', false, (v) => s.modify(p.id, { sl: v }))
-        if (p.tp !== null) line(p.tp, `Objectif ${p.tp.toFixed(d)}`, '#26a69a', false, (v) => s.modify(p.id, { tp: v }))
+        priceLine('trade', p.entry, `${p.side === 1 ? 'Achat' : 'Vente'} ${p.size.toFixed(4)} @ ${p.entry.toFixed(d)}`, '#2962ff', true)
+        if (p.sl !== null) priceLine('trade', p.sl, `Stop ${p.sl.toFixed(d)}`, '#ef5350', false, (v) => s.modify(p.id, { sl: v }))
+        if (p.tp !== null) priceLine('trade', p.tp, `Objectif ${p.tp.toFixed(d)}`, '#26a69a', false, (v) => s.modify(p.id, { tp: v }))
       })
-      s.orders.forEach((o) => line(o.price, `${o.side === 1 ? 'Achat' : 'Vente'} ${o.type} ${o.price.toFixed(d)}`, '#f7931a', false, (v) => s.modifyOrder(o.id, v)))
+      s.orders.forEach((o) => priceLine('trade', o.price, `${o.side === 1 ? 'Achat' : 'Vente'} ${o.type} ${o.price.toFixed(d)}`, '#f7931a', false, (v) => s.modifyOrder(o.id, v)))
     }
     // On ne redessine que si la liste d'ordres change, pas à chaque variation de prix.
     let key = ''
@@ -240,13 +324,45 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     }
     onChange()
     return session.subscribe(onChange)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, active, config.symbol])
 
+  // ---------------------------------------------------------------- lignes d'alertes
+  useEffect(() => {
+    let key = ''
+    const onChange = (): void => {
+      const c = chart.current
+      if (!c) return
+      const mine = alerts.alerts.filter((a) => a.source === cfg.current.source && a.symbol === cfg.current.symbol)
+      const k = mine.map((a) => `${a.id}:${a.price}:${a.active}:${a.condition}`).join(',')
+      if (k === key) return
+      key = k
+      c.removeOverlay({ groupId: 'alert' })
+      const d = cfg.current.precision
+      mine.forEach((a) => priceLine('alert', a.price, `🔔 ${a.price.toFixed(d)}${a.active ? '' : ' (en pause)'}`, a.active ? ALERT_COLOR : '#787b86', false,
+        (v) => alerts.update(a.id, { price: v })))
+    }
+    onChange()
+    return alerts.subscribe(onChange)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.source, config.symbol])
+
   // ---------------------------------------------------------------- données + temps réel
-  // Le prix n'alimente la session de trading que si elle suit bien ce graphique.
+  // Chaque prix reçu alimente les cotations (donc les alertes) ; la session de trading, elle,
+  // ne suit que le graphique actif.
   const feed = (price: number): void => {
+    quotes.setPrice(cfg.current.source, cfg.current.symbol, price)
     const s = cb.current.session
     if (cb.current.active && s.context.symbol === cfg.current.symbol && s.context.source === cfg.current.source) s.onPrice(price, Date.now())
+  }
+
+  /** Règle le zoom pour afficher exactement `count` bougies. */
+  const fit = (count: number): void => {
+    const c = chart.current
+    if (!c || !box.current || count < 1) return
+    const width = box.current.clientWidth - 150 // échelle de prix et marge de droite
+    c.setBarSpace(Math.min(50, Math.max(1, width / count)))
+    c.scrollToRealTime()
   }
 
   useEffect(() => {
@@ -254,29 +370,38 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     if (!c) return
     let dead = false
     const { source, symbol, tf, precision } = config
+    const step = TF_MS[tf]
+    const range = pendingRange.current
+    pendingRange.current = null
     setLoading(true)
     c.setPriceVolumePrecision(precision, 2)
     ;(async () => {
       try {
         // Dukascopy est lent au premier téléchargement : on commence par moins de bougies.
-        const bars = await fetchCandles(source, symbol, tf, { limit: source === 'dukascopy' ? 600 : 3000 })
+        const page = source === 'dukascopy' ? 600 : 3000
+        const wanted = range === null ? page : Math.min(20_000, Math.ceil(Math.min(range, 40 * 365 * 86_400_000) / step) + 5)
+        const bars = await fetchCandles(source, symbol, tf, { limit: Math.max(wanted, range === null ? 0 : 50) })
         if (dead) return
         c.applyNewData(bars, bars.length > 0)
+        if (range !== null) fit(Math.min(bars.length, wanted))
+        if (!hovering.current) showLast()
         if (bars.length) feed(bars[bars.length - 1].close)
         c.loadMore((ts) => {
           if (ts === null || replay.current.active) return
-          void fetchCandles(source, symbol, tf, { end: ts - 1, limit: source === 'dukascopy' ? 600 : 3000 })
+          void fetchCandles(source, symbol, tf, { end: ts - 1, limit: page })
             .then((older) => !dead && c.applyMoreData(older, older.length > 0))
             .catch(() => !dead && c.applyMoreData([], false))
         })
         stopStream.current = openStream(source, symbol, tf, (bar) => {
           if (dead || replay.current.active) return
           c.updateData(bar)
+          if (!hovering.current) showLast()
           feed(bar.close)
         })
       } catch (e) {
         if (!dead) {
           c.applyNewData([], false)
+          showBar(undefined, undefined)
           cb.current.onMessage((e as Error).message, 'error')
         }
       } finally {
@@ -296,10 +421,13 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
   useEffect(() => {
     let dead = false
     wipeDrawings()
+    window.clearTimeout(saveTimer.current)
+    snapshot.current = '[]'
     void api<SavedDrawing[]>(`/api/drawings?source=${encodeURIComponent(config.source)}&symbol=${encodeURIComponent(config.symbol)}`)
       .then((list) => {
         if (dead) return
         list.forEach((d) => addDrawing({ name: d.name, points: d.points, extendData: d.extendData }))
+        snapshot.current = JSON.stringify(list)
       })
       .catch(() => undefined)
     return () => {
@@ -348,6 +476,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       }
     }
     if (r.acc > r.speed) r.acc = 0 // machine trop lente pour cette vitesse : on ne cumule pas de retard
+    if (!hovering.current) showLast()
     notify(!r.playing)
     if (r.playing) r.raf = requestAnimationFrame(frame)
   }
@@ -382,6 +511,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       Object.assign(r, { active: true, playing: false, bars, idx, acc: 0, picking: false })
       c.applyNewData(bars.slice(0, idx), false)
       c.scrollToRealTime()
+      showLast()
       const s = cb.current.session
       s.reset({ source, symbol, tf })
       s.price = bars[idx - 1].close
@@ -394,18 +524,38 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     }
   }
 
-  // Choix de la date de départ en cliquant sur le graphique.
+  // ---------------------------------------------------------------- souris : position, clic droit, choix du replay
+  /** Prix sous un point du graphique (null hors de la zone des bougies). */
+  const priceAt = (x: number, y: number): { price: number; timestamp?: number } | null => {
+    const c = chart.current
+    if (!c) return null
+    const size = c.getSize('candle_pane', 'main' as never)
+    if (!size || y < 0 || y > size.height || x < 0 || x > size.width) return null
+    const pt = c.convertFromPixel([{ x, y }], { paneId: 'candle_pane' }) as { value?: number; timestamp?: number }[]
+    const price = pt[0]?.value
+    return price !== undefined && Number.isFinite(price) ? { price, timestamp: pt[0]?.timestamp } : null
+  }
+  const relative = (e: React.MouseEvent): { x: number; y: number } => {
+    const rect = box.current!.getBoundingClientRect()
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+  }
+
   const onPick = (e: React.MouseEvent): void => {
     onActivate()
     const r = replay.current
-    const c = chart.current
-    if (!r.picking || !c) return
-    const rect = box.current!.getBoundingClientRect()
-    const pt = c.convertFromPixel([{ x: e.clientX - rect.left, y: e.clientY - rect.top }], { paneId: 'candle_pane' }) as { timestamp?: number }[]
-    const ts = pt[0]?.timestamp
+    if (!r.picking || e.button !== 0) return
+    const { x, y } = relative(e)
+    const ts = priceAt(x, y)?.timestamp
     r.picking = false
     if (ts) void startReplay(ts)
     else notify(true)
+  }
+
+  const onMenu = (e: React.MouseEvent): void => {
+    e.preventDefault()
+    const { x, y } = relative(e)
+    const at = priceAt(x, y)
+    if (at) cb.current.onContext({ x: e.clientX, y: e.clientY, price: at.price })
   }
 
   // ---------------------------------------------------------------- commandes exposées
@@ -425,11 +575,14 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       }
       return [...map.keys()]
     },
-    draw: (tool) => {
+    draw: (tool, data) => {
       const c = chart.current
       if (!c) return
-      if (drawingId.current) c.removeOverlay(drawingId.current)
-      let extendData: unknown
+      if (drawingId.current) {
+        drawings.current.delete(drawingId.current)
+        c.removeOverlay(drawingId.current)
+      }
+      let extendData = data
       if (TEXT_TOOLS.has(tool)) {
         const text = window.prompt('Texte à afficher :', '')
         if (!text) return
@@ -439,9 +592,10 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     },
     cancelDraw: () => {
       if (drawingId.current) {
-        drawings.current.delete(drawingId.current)
-        chart.current?.removeOverlay(drawingId.current)
+        const id = drawingId.current
+        drawings.current.delete(id)
         drawingId.current = null
+        chart.current?.removeOverlay(id)
       }
       if (replay.current.picking) {
         replay.current.picking = false
@@ -454,6 +608,17 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     },
     clearDrawings: () => {
       wipeDrawings()
+      scheduleSave()
+    },
+    restoreDrawings: (list) => {
+      restoring.current = true
+      wipeDrawings()
+      list.forEach((d) => addDrawing({ name: d.name, points: d.points, extendData: d.extendData }))
+      scheduleSave()
+    },
+    addHorizontalLine: (price) => {
+      const list = chart.current?.getDataList() ?? []
+      addDrawing({ name: 'horizontalStraightLine', points: [{ timestamp: list[list.length - 1]?.timestamp ?? Date.now(), value: price }] })
       scheduleSave()
     },
     setFlags: (f) => {
@@ -473,6 +638,47 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       a.click()
     },
     goTo: (ts) => chart.current?.scrollToTimestamp(ts, 300),
+    goToDate: async (ts) => {
+      const c = chart.current
+      if (!c || replay.current.active) return
+      const list = c.getDataList()
+      if (list.length && ts >= list[0].timestamp) {
+        c.scrollToTimestamp(ts, 300)
+        return
+      }
+      const { source, symbol, tf } = cfg.current
+      const step = TF_MS[tf]
+      if ((Date.now() - ts) / step > 60_000) {
+        cb.current.onMessage('Date trop éloignée pour cette unité de temps : choisis une unité plus grande.', 'error')
+        return
+      }
+      setLoading(true)
+      try {
+        const bars = await fetchCandles(source, symbol, tf, { start: ts - 300 * step })
+        if (!bars.length) throw new Error('Pas de données à cette date pour ce symbole.')
+        c.applyNewData(bars, true)
+        c.scrollToTimestamp(Math.max(ts, bars[0].timestamp), 0)
+      } catch (e) {
+        cb.current.onMessage((e as Error).message, 'error')
+      } finally {
+        setLoading(false)
+      }
+    },
+    setRange: (ms) => { pendingRange.current = ms },
+    reload: () => setReload((n) => n + 1),
+    zoom: (factor) => {
+      const c = chart.current
+      if (!c) return
+      if (factor === 0) {
+        c.setBarSpace(8)
+        c.scrollToRealTime()
+      } else c.setBarSpace(Math.min(50, Math.max(1, c.getBarSpace() * factor)))
+    },
+    pointerPrice: () => (pointer.current ? priceAt(pointer.current.x, pointer.current.y)?.price ?? null : null),
+    lastPrice: () => {
+      const list = chart.current?.getDataList() ?? []
+      return list.length ? list[list.length - 1].close : 0
+    },
     pickReplayStart: () => {
       replay.current.picking = true
       notify(true)
@@ -493,6 +699,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     },
     step: () => {
       if (!stepOnce()) cb.current.onMessage('Fin des données du replay.', 'info')
+      if (!hovering.current) showLast()
       notify(true)
     },
     setSpeed: (v) => {
@@ -501,10 +708,17 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     },
   }))
 
+  const tradable = active && session.context.symbol === config.symbol && session.context.source === config.source
   return (
-    <div className={`pane${active ? ' active' : ''}`} onMouseDownCapture={onPick}>
-      <div className="pane-title">{config.symbol} · {config.tf}</div>
+    <div className={`pane${active ? ' active' : ''}`} onMouseDownCapture={onPick} onContextMenu={onMenu}
+      onMouseMove={(e) => { pointer.current = relative(e) }} onMouseLeave={() => { pointer.current = null }}>
       <div ref={box} className="pane-chart" />
+      <div className="pane-head">
+        <span className="ph-sym">{config.symbol}</span>
+        <span className="ph-tf">{TF_LABEL[config.tf]}</span>
+        <span ref={head} className="ph-ohlc" />
+        {tradable && <QuickTrade session={session} precision={config.precision} onMessage={onMessage} />}
+      </div>
       {loading && <div className="pane-loading"><span className="spinner" />Chargement…</div>}
     </div>
   )

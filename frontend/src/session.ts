@@ -1,5 +1,6 @@
 // Session de trading simulé (replay ou temps réel) : ordres, positions, stops, statistiques.
 import { api, type Bar } from './api'
+import { loadPref, savePref } from './stores'
 
 export interface Position {
   id: number
@@ -43,6 +44,9 @@ export class TradingSession {
   time = 0
   context = { source: '', symbol: '', tf: '' }
   version = 0
+  /** Écart achat/vente simulé (en unités de prix) et quantité des boutons Achat / Vente rapides (0 = automatique). */
+  spread = loadPref('bbc_trade', { spread: 0, quick: 0 }).spread
+  quickQty = loadPref('bbc_trade', { spread: 0, quick: 0 }).quick
   private nextId = 1
   private peak = 10_000
   private maxDd = 0
@@ -72,6 +76,23 @@ export class TradingSession {
     this.emit()
   }
 
+  setTradeOptions(spread: number, quickQty: number): void {
+    this.spread = Math.max(0, spread)
+    this.quickQty = Math.max(0, quickQty)
+    savePref('bbc_trade', { spread: this.spread, quick: this.quickQty })
+    this.emit()
+  }
+
+  /** Prix de vente (bid) et d'achat (ask) autour du dernier prix. */
+  get bid(): number { return this.price - this.spread / 2 }
+  get ask(): number { return this.price + this.spread / 2 }
+
+  /** Quantité des ordres rapides : celle choisie, sinon 10 % du capital. */
+  defaultSize(): number {
+    if (this.quickQty > 0) return this.quickQty
+    return this.price > 0 ? (this.equity() * 0.1) / this.price : 0
+  }
+
   unrealized(p: Position): number {
     return (this.price - p.entry) * p.size * p.side
   }
@@ -89,9 +110,10 @@ export class TradingSession {
   market(side: 1 | -1, size: number, sl: number | null, tp: number | null): string | null {
     if (!(this.price > 0)) return 'Aucun prix disponible pour le moment.'
     if (!(size > 0)) return 'Taille de position invalide.'
-    const bad = this.checkLevels(side, this.price, sl, tp)
+    const fill = side === 1 ? this.ask : this.bid // on achète au prix haut, on vend au prix bas
+    const bad = this.checkLevels(side, fill, sl, tp)
     if (bad) return bad
-    this.positions.push({ id: this.nextId++, side, size, entry: this.price, time: this.time, sl, tp })
+    this.positions.push({ id: this.nextId++, side, size, entry: fill, time: this.time, sl, tp })
     this.emit()
     return null
   }
@@ -133,6 +155,7 @@ export class TradingSession {
   close(id: number, price = this.price, reason = 'manuel', silent = false): void {
     const p = this.positions.find((x) => x.id === id)
     if (!p) return
+    if (reason === 'manuel') price -= (p.side * this.spread) / 2 // clôture manuelle : du mauvais côté du spread
     const pnl = (price - p.entry) * p.size * p.side
     this.balance += pnl
     this.positions = this.positions.filter((x) => x.id !== id)

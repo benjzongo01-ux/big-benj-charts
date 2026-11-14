@@ -234,3 +234,49 @@ export const INDICATORS: { id: string; label: string; main: boolean }[] = [
 ]
 INDICATORS.push(...EXTRA_INDICATORS)
 INDICATORS.sort((a, b) => Number(b.main) - Number(a.main) || a.label.localeCompare(b.label, 'fr'))
+
+// ---------------------------------------------------------------- barre de gauche et favoris
+// Les canaux sont rangés avec les lignes pour alléger la barre.
+const canaux = TOOL_GROUPS.findIndex((g) => g.label === 'Canaux')
+if (canaux >= 0) {
+  TOOL_GROUPS[0].tools.push(...TOOL_GROUPS[canaux].tools)
+  TOOL_GROUPS.splice(canaux, 1)
+}
+
+// Emoji posé sur le graphique (le caractère choisi est gardé dans extendData).
+templates.push({
+  name: 'emoji', totalStep: 2, needDefaultPointFigure: false, needDefaultXAxisFigure: false, needDefaultYAxisFigure: false,
+  createPointFigures: ({ coordinates: c, overlay }) => c.length < 1 ? [] : [{
+    type: 'text',
+    attrs: { x: c[0].x, y: c[0].y, text: String(overlay.extendData ?? '🙂'), align: 'center', baseline: 'middle' },
+    styles: { size: 26, backgroundColor: 'transparent', color: '#ffffff', paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 },
+  }],
+})
+
+export const EMOJIS = ['🙂', '😎', '🤔', '😱', '🚀', '🔥', '💰', '💎', '✅', '❌', '⚠️', '⭐', '🎯', '📈', '📉', '🐂', '🐻', '👍', '👎', '❓']
+
+/** Icône SVG de chaque catégorie de la barre de gauche (voir icons.tsx). */
+export const GROUP_ICON: Record<string, string> = {
+  Lignes: 'line', Fibonacci: 'fib', Formes: 'shape', Annotations: 'text', 'Figures chartistes': 'pattern', 'Positions et mesure': 'ruler',
+}
+
+/** Icône SVG des outils courants ; les autres gardent leur symbole texte. */
+export const TOOL_ICON: Record<string, string> = {
+  segment: 'line', rayLine: 'ray', horizontalStraightLine: 'hline', horizontalRayLine: 'hray', verticalStraightLine: 'vline',
+  crossLine: 'cross', rect: 'shape', fibonacciLine: 'fib', fibExtension: 'fibext', parallelStraightLine: 'channel',
+  textNote: 'text', measure: 'ruler', position: 'position',
+}
+
+/** Favoris proposés au premier lancement (modifiable par clic droit sur un outil). */
+export const DEFAULT_FAVORITES = [
+  'segment', 'rect', 'fibonacciLine', 'fibExtension', 'parallelStraightLine', 'textNote',
+  'rayLine', 'horizontalStraightLine', 'horizontalRayLine', 'crossLine', 'verticalStraightLine',
+]
+
+export function findTool(id: string): Tool | undefined {
+  for (const g of TOOL_GROUPS) {
+    const t = g.tools.find((x) => x.id === id)
+    if (t) return t
+  }
+  return undefined
+}
