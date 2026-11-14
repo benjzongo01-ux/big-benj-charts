@@ -10,3 +10,11 @@ frontend/dist/
 # Clés Firebase : ne jamais les versionner
 *firebase-adminsdk*.json
 serviceAccount*.json
+
+# Application Android : la cle de signature et les fichiers de construction ne vont jamais dans Git
+android/*.jks
+android/keystore.properties
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/

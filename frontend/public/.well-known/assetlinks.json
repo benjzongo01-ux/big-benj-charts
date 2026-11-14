@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.bigbenj.charts",
+      "sha256_cert_fingerprints": [
+        "1E:E0:64:12:09:C5:B4:F0:8D:5A:E2:16:83:3A:8A:A7:6A:5B:7C:59:6B:E9:FD:A6:21:5B:13:22:BA:1C:07:84"
+      ]
+    }
+  }
+]

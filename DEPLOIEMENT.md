@@ -76,6 +76,27 @@ le serveur envoie une notification à tous les appareils du compte, même applic
 - Le serveur vérifie les prix toutes les 10 secondes. Un pic très bref entre deux vérifications peut être manqué.
 - Tant qu'il reste des alertes actives, le serveur se maintient éveillé. Sans alerte active, il s'endort comme avant.
 
+## Application Android (APK)
+
+Le dossier `android/` contient une vraie application Android qui affiche le site en plein écran et reçoit ses notifications.
+
+- **Installer sur un téléphone branché en USB** (débogage USB activé) :
+  `adb install -r android/app/build/outputs/apk/release/app-release.apk`
+- **Installer sur un autre téléphone** : ouvrir `https://big-benj-charts.onrender.com/big-benj-charts.apk` dans Chrome,
+  puis accepter l'installation depuis une source inconnue.
+- **Reconstruire l'APK** : dans `android/`, lancer Gradle avec la tâche `assembleRelease`.
+
+La clé de signature est dans `android/bigbenj-release.jks` et son mot de passe dans `android/keystore.properties`.
+Ces deux fichiers ne sont pas dans Git : **fais-en une copie de sauvegarde**. Sans eux, impossible de publier une
+mise à jour de l'application ; il faudrait la désinstaller et la réinstaller sur chaque téléphone.
+
+L'application n'a presque jamais besoin d'être reconstruite : elle affiche le site, donc chaque mise à jour du site
+arrive toute seule dedans.
+
+Sur **iPhone**, il n'existe pas de fichier à installer : Apple n'accepte que les applications publiées sur l'App Store
+(compte développeur à 99 $ par an et un Mac pour la construire). L'installation se fait depuis Safari :
+menu Partager > « Sur l'écran d'accueil ». L'icône, le plein écran et les notifications fonctionnent ainsi (iOS 16.4 ou plus).
+
 ## Mettre à jour le site
 
 Chaque envoi sur GitHub redéploie le site tout seul :
