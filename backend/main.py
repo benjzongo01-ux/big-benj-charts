@@ -359,7 +359,8 @@ async def health() -> dict:
 
 # ------------------------------------------------------------------ interface compilée
 DIST = ROOT / "frontend" / "dist"
-MEDIA = {".js": "text/javascript", ".webmanifest": "application/manifest+json", ".html": "text/html"}
+MEDIA = {".js": "text/javascript", ".webmanifest": "application/manifest+json", ".html": "text/html",
+         ".apk": "application/vnd.android.package-archive"}
 if DIST.exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
