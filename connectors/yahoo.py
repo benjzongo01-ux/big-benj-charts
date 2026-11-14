@@ -15,8 +15,8 @@ import numpy as np
 from .base import EMPTY, Connector, ConnectorError, clean, resample, tf_ms
 
 URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
-INTERVALS = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "60m", "4h": "60m", "1d": "1d", "1w": "1wk"}
-MAX_AGE_DAYS = {"1m": 7, "5m": 59, "15m": 59, "30m": 59, "1h": 729, "4h": 729}
+INTERVALS = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "60m", "2h": "60m", "4h": "60m", "1d": "1d", "1w": "1wk"}
+MAX_AGE_DAYS = {"1m": 7, "5m": 59, "15m": 59, "30m": 59, "1h": 729, "2h": 729, "4h": 729}
 
 STOCKS = [
     ("AAPL", "Apple"), ("MSFT", "Microsoft"), ("NVDA", "Nvidia"), ("GOOGL", "Alphabet"), ("AMZN", "Amazon"),
@@ -72,8 +72,8 @@ class YahooConnector(Connector):
         if tf in ("1d", "1w"):
             rows[:, 0] = rows[:, 0] // 86400_000 * 86400_000  # bougies journalières calées à minuit UTC
             rows = clean(rows)
-        if tf == "4h":
-            rows = resample(rows, "4h")
+        if tf in ("2h", "4h"):
+            rows = resample(rows, tf)
         return rows
 
     async def stream(self, symbol: str, tf: str) -> AsyncIterator[list[float]]:

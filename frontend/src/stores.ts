@@ -16,12 +16,13 @@ export interface WatchItem extends PaneConfig {
 export const MARKET_LABEL: Record<string, string> = {
   crypto: 'Crypto', forex: 'Forex', indices: 'Indices', matieres: 'Matières premières', actions: 'Actions',
 }
-export const MARKET_ORDER = ['crypto', 'forex', 'indices', 'matieres', 'actions']
+export const MARKET_ORDER = ['crypto', 'forex', 'matieres', 'indices', 'actions']
 
 /** Catégorie d'un symbole (devinée pour les anciens éléments de la liste, qui ne la connaissent pas). */
 export function marketOf(w: { source: string; symbol: string; market?: string }): string {
   if (w.market) return w.market
-  if (w.source === 'binance') return 'crypto'
+  if (w.source === 'fx') return 'forex'
+  if (w.source === 'binance') return /^(XAU|XAG|XPT|XPD|COPPER|CL|BZ|NATGAS)USDT$/.test(w.symbol) ? 'matieres' : 'crypto'
   if (w.source === 'yahoo' || w.source === 'twelvedata') return w.symbol.startsWith('^') ? 'indices' : 'actions'
   if (/IDX/.test(w.symbol)) return 'indices'
   if (/^(XAU|XAG)|CMD/.test(w.symbol)) return 'matieres'

@@ -18,6 +18,8 @@ interface Settings {
   panes: PaneConfig[]
   watchlist: WatchItem[]
   indicators: string[]
+  /** Version de la liste par défaut (sert à migrer les anciennes listes). */
+  watchVersion?: number
 }
 interface Layout {
   side: SideTab | null
@@ -32,15 +34,33 @@ const DEFAULT_WATCH: WatchItem[] = [
   { source: 'binance', symbol: 'BTCUSDT', tf: '1h', precision: 2, name: 'Bitcoin', market: 'crypto' },
   { source: 'binance', symbol: 'ETHUSDT', tf: '1h', precision: 2, name: 'Ethereum', market: 'crypto' },
   { source: 'binance', symbol: 'SOLUSDT', tf: '1h', precision: 2, name: 'Solana', market: 'crypto' },
-  { source: 'dukascopy', symbol: 'EURUSD', tf: '1h', precision: 5, name: 'Euro / Dollar', market: 'forex' },
-  { source: 'dukascopy', symbol: 'XAUUSD', tf: '1h', precision: 2, name: 'Or', market: 'matieres' },
-  { source: 'dukascopy', symbol: 'USA500IDXUSD', tf: '1h', precision: 1, name: 'S&P 500', market: 'indices' },
-  { source: 'yahoo', symbol: 'AAPL', tf: '1d', precision: 2, name: 'Apple', market: 'actions' },
-  { source: 'yahoo', symbol: 'NVDA', tf: '1d', precision: 2, name: 'Nvidia', market: 'actions' },
+  { source: 'fx', symbol: 'EURUSD', tf: '1h', precision: 5, name: 'Euro / Dollar', market: 'forex' },
+  { source: 'fx', symbol: 'GBPUSD', tf: '1h', precision: 5, name: 'Livre / Dollar', market: 'forex' },
+  { source: 'fx', symbol: 'USDJPY', tf: '1h', precision: 3, name: 'Dollar / Yen', market: 'forex' },
+  { source: 'binance', symbol: 'XAUUSDT', tf: '1h', precision: 2, name: 'Or (XAU/USD)', market: 'matieres' },
+  { source: 'binance', symbol: 'XAGUSDT', tf: '1h', precision: 2, name: 'Argent (XAG/USD)', market: 'matieres' },
+  { source: 'binance', symbol: 'CLUSDT', tf: '1h', precision: 2, name: 'Pétrole WTI', market: 'matieres' },
 ]
+const WATCH_VERSION = 2
 const DEFAULTS: Settings = {
-  theme: 'dark', chartType: 'candle_solid', layout: 1, watchlist: DEFAULT_WATCH, indicators: ['VOL'],
-  panes: [0, 1, 2, 3].map((i) => ({ source: 'binance', symbol: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT'][i], tf: '1h', precision: 2 })),
+  theme: 'dark', chartType: 'candle_solid', layout: 1, watchlist: DEFAULT_WATCH, indicators: ['VOL'], watchVersion: WATCH_VERSION,
+  panes: [
+    { source: 'binance', symbol: 'BTCUSDT', tf: '1h', precision: 2 }, { source: 'binance', symbol: 'XAUUSDT', tf: '1h', precision: 2 },
+    { source: 'fx', symbol: 'EURUSD', tf: '1h', precision: 5 }, { source: 'binance', symbol: 'ETHUSDT', tf: '1h', precision: 2 },
+  ],
+}
+
+/** Met à jour d'anciens réglages : les actions et les sources retirées disparaissent, l'or et le forex rapides arrivent. */
+function migrate(s: Settings, valid?: Set<string>): Settings {
+  const old = s.watchVersion !== WATCH_VERSION
+  let watchlist = s.watchlist
+  if (old) {
+    const keep = watchlist.filter((w) => w.source === 'binance')
+    watchlist = [...keep, ...DEFAULT_WATCH.filter((d) => !keep.some((k) => k.symbol === d.symbol))]
+  }
+  if (valid) watchlist = watchlist.filter((w) => valid.has(w.source))
+  const panes = s.panes.map((p, i) => ((valid && !valid.has(p.source)) || (old && p.source !== 'binance') ? DEFAULTS.panes[i] : p))
+  return { ...s, watchlist, panes, watchVersion: WATCH_VERSION }
 }
 const DEFAULT_LAYOUT: Layout = { side: 'watch', sideWidth: 300, favorites: DEFAULT_FAVORITES, favPos: { x: 60, y: 44 } }
 const CHART_TYPES = [
@@ -62,7 +82,7 @@ function loadSettings(): Settings {
     if (!Array.isArray(s.panes) || s.panes.length < 4) s.panes = DEFAULTS.panes
     if (!Array.isArray(s.watchlist)) s.watchlist = DEFAULT_WATCH
     if (!Array.isArray(s.indicators)) s.indicators = ['VOL']
-    return s
+    return migrate(s)
   } catch {
     return DEFAULTS
   }
@@ -199,7 +219,9 @@ export default function App(): JSX.Element {
       }
       const [srcs, saved] = await Promise.all([api<SourceInfo[]>('/api/sources'), api<Partial<Settings>>('/api/settings')])
       setSources(srcs)
-      if (saved && Array.isArray(saved.panes) && saved.panes.length >= 4) setSettings((s) => ({ ...s, ...saved }))
+      const valid = new Set(srcs.map((x) => x.name))
+      // La version vient des réglages enregistrés : d'anciens réglages du serveur doivent être migrés eux aussi.
+      setSettings((s) => migrate(saved && Array.isArray(saved.panes) && saved.panes.length >= 4 ? { ...s, ...saved, watchVersion: saved.watchVersion } : s, valid))
       if (!alerts.loaded) {
         alerts.onTrigger = (text) => message(text)
         void alerts.load()
@@ -404,7 +426,8 @@ export default function App(): JSX.Element {
         <span className="vsep" />
         <div className="tfs">
           {TIMEFRAMES.map((tf) => (
-            <button key={tf} className={tf === current.tf ? 'on' : ''} disabled={replay.active} onClick={() => setPane({ tf })}>{TF_LABEL[tf]}</button>
+            <button key={tf} className={tf === current.tf ? 'on' : ''} onClick={() => setPane({ tf })}
+              title={replay.active ? 'Changer d’unité de temps sans quitter le replay' : undefined}>{TF_LABEL[tf]}</button>
           ))}
         </div>
         <span className="vsep" />

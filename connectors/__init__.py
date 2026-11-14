@@ -4,13 +4,13 @@ from __future__ import annotations
 from .base import TF_SECONDS, Connector, ConnectorError, clean, resample, tf_ms
 from .binance import BinanceConnector
 from .dukascopy import DukascopyConnector
+from .fx import FxConnector
 from .mt5 import MT5Connector
-from .twelvedata import TwelveDataConnector
-from .yahoo import YahooConnector
 
 REGISTRY: dict[str, Connector] = {
     c.name: c
-    for c in (BinanceConnector(), DukascopyConnector(), YahooConnector(), MT5Connector(), TwelveDataConnector())
+    # Crypto et matières premières (Binance), forex (Yahoo + Swissquote), courtier (MT5), puis Dukascopy en secours.
+    for c in (BinanceConnector(), FxConnector(), MT5Connector(), DukascopyConnector())
 }
 
 

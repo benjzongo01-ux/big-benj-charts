@@ -39,13 +39,6 @@ INSTRUMENTS: dict[str, tuple[str, str, float, int]] = {
     "XAGUSD": ("Argent / Dollar", "matieres", 1e3, 3),
     "BRENTCMDUSD": ("Pétrole Brent", "matieres", 1e3, 2),
     "LIGHTCMDUSD": ("Pétrole WTI", "matieres", 1e3, 2),
-    "USA500IDXUSD": ("S&P 500", "indices", 1e3, 1),
-    "USATECHIDXUSD": ("Nasdaq 100", "indices", 1e3, 1),
-    "USA30IDXUSD": ("Dow Jones 30", "indices", 1e3, 1),
-    "DEUIDXEUR": ("DAX 40", "indices", 1e3, 1),
-    "FRAIDXEUR": ("CAC 40", "indices", 1e3, 1),
-    "GBRIDXGBP": ("FTSE 100", "indices", 1e3, 1),
-    "JPNIDXJPY": ("Nikkei 225", "indices", 1e3, 0),
 }
 
 RECORD = struct.Struct(">5if")  # décalage (s), open, close, low, high, volume
@@ -53,8 +46,8 @@ RECORD = struct.Struct(">5if")  # décalage (s), open, close, low, high, volume
 
 class DukascopyConnector(Connector):
     name = "dukascopy"
-    label = "Dukascopy"
-    markets = ("forex", "indices", "matieres")
+    label = "Dukascopy (lent)"
+    markets = ("forex", "matieres")
 
     def __init__(self) -> None:
         self._client = httpx.AsyncClient(timeout=15, limits=httpx.Limits(max_connections=4),

@@ -24,13 +24,13 @@ export interface SourceInfo {
   message: string
 }
 
-export const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'] as const
+export const TIMEFRAMES = ['1m', '5m', '15m', '30m', '1h', '2h', '4h', '1d', '1w'] as const
 export const TF_LABEL: Record<string, string> = {
-  '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '4h': '4h', '1d': '1J', '1w': '1S',
+  '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h', '2h': '2h', '4h': '4h', '1d': '1J', '1w': '1S',
 }
 export const TF_MS: Record<string, number> = {
   '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
-  '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000,
+  '1h': 3_600_000, '2h': 7_200_000, '4h': 14_400_000, '1d': 86_400_000, '1w': 604_800_000,
 }
 
 const TOKEN_KEY = 'bbc_token'

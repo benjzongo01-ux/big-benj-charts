@@ -127,13 +127,36 @@ const templates: OverlayTemplate[] = [
   },
 ]
 
+// Couleur et épaisseur choisies par l'utilisateur : appliquées aux figures des outils maison.
+// (Les outils de la bibliothèque les lisent directement dans les styles du dessin.)
+const KEEP_COLORS = new Set(['measure', 'position', 'priceRange', 'tradeLine', 'emoji']) // couleurs porteuses de sens
+function recolor(t: OverlayTemplate): OverlayTemplate {
+  const make = t.createPointFigures
+  if (!make || KEEP_COLORS.has(t.name)) return t
+  return {
+    ...t,
+    createPointFigures: (params) => {
+      const figures = make(params)
+      const st = params.overlay.styles as { line?: { color?: string; size?: number } } | null
+      const color = st?.line?.color
+      if (!color) return figures
+      return (Array.isArray(figures) ? figures : [figures]).map((f): OverlayFigure => {
+        const s = (f.styles ?? {}) as Record<string, unknown>
+        if (f.type === 'line') return { ...f, styles: { ...s, color, size: st?.line?.size ?? 1 } }
+        if (f.type === 'text') return s.backgroundColor && s.backgroundColor !== 'transparent' ? { ...f, styles: { ...s, backgroundColor: color } } : f
+        return { ...f, styles: { ...s, borderColor: color, borderSize: st?.line?.size ?? 1, color: s.style === 'fill' ? fill(color, 0.9) : fill(color, 0.15) } }
+      })
+    },
+  }
+}
+
 let done = false
 /** Enregistre les outils maison (une seule fois). */
 export function registerTools(): void {
   if (done) return
   done = true
-  templates.forEach(registerOverlay)
-  registerExtraTools()
+  templates.forEach((t) => registerOverlay(recolor(t)))
+  registerExtraTools(recolor)
   registerExtraIndicators()
   registerLocale('fr-FR', {
     time: 'Date : ', open: 'Ouv. : ', high: 'Haut : ', low: 'Bas : ', close: 'Clôt. : ', volume: 'Volume : ',

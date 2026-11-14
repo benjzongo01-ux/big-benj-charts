@@ -553,8 +553,8 @@ const TEMPLATES: OverlayTemplate[] = [
   })),
 ]
 
-export function registerExtraTools(): void {
-  TEMPLATES.forEach(registerOverlay)
+export function registerExtraTools(wrap: (t: OverlayTemplate) => OverlayTemplate = (t) => t): void {
+  TEMPLATES.forEach((t) => registerOverlay(wrap(t)))
 }
 
 interface ExtraTool { id: string; label: string; icon: string }

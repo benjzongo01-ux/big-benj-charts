@@ -15,7 +15,22 @@ from .base import EMPTY, Connector, ConnectorError, clean, tf_ms
 # là où api.binance.com est bloqué ou en panne.
 REST_HOSTS = ("https://api.binance.com", "https://data-api.binance.vision")
 WS_HOSTS = ("wss://stream.binance.com:9443/ws", "wss://data-stream.binance.vision/ws")
-INTERVALS = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "4h": "4h", "1d": "1d", "1w": "1w"}
+INTERVALS = {"1m": "1m", "5m": "5m", "15m": "15m", "30m": "30m", "1h": "1h", "2h": "2h", "4h": "4h", "1d": "1d", "1w": "1w"}
+
+# Matières premières : contrats perpétuels de Binance, cotés en continu et en temps réel.
+# Leur prix suit de très près le cours au comptant (l'écart est en général inférieur à 0,1 %).
+FUT_REST = ("https://fapi.binance.com",)
+FUT_WS = ("wss://fstream.binance.com/market/ws", "wss://fstream.binance.com/ws")
+FUTURES: dict[str, tuple[str, int]] = {
+    "XAUUSDT": ("Or (XAU/USD)", 2),
+    "XAGUSDT": ("Argent (XAG/USD)", 2),
+    "XPTUSDT": ("Platine", 2),
+    "XPDUSDT": ("Palladium", 2),
+    "COPPERUSDT": ("Cuivre", 3),
+    "CLUSDT": ("Pétrole WTI", 2),
+    "BZUSDT": ("Pétrole Brent", 2),
+    "NATGASUSDT": ("Gaz naturel", 3),
+}
 
 POPULAR = [
     "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT", "AVAXUSDT",
@@ -32,9 +47,9 @@ class BinanceConnector(Connector):
         self._client = httpx.AsyncClient(timeout=20, limits=httpx.Limits(max_connections=8))
         self._symbols: list[dict] | None = None
 
-    async def _get(self, path: str, params: dict) -> object:
+    async def _get(self, path: str, params: dict, hosts: tuple[str, ...] = REST_HOSTS) -> object:
         last: Exception | None = None
-        for host in REST_HOSTS:
+        for host in hosts:
             try:
                 r = await self._client.get(host + path, params=params)
                 if r.status_code == 429:
@@ -63,9 +78,11 @@ class BinanceConnector(Connector):
                                 "market": "crypto", "precision": precision})
                 rank = {s: i for i, s in enumerate(POPULAR)}
                 out.sort(key=lambda x: (rank.get(x["symbol"], 999), x["symbol"]))
-                self._symbols = out
+                metals = [{"symbol": s, "name": n, "market": "matieres", "precision": p} for s, (n, p) in FUTURES.items()]
+                self._symbols = metals + out
             except ConnectorError:
-                return [{"symbol": s, "name": s, "market": "crypto", "precision": 2} for s in POPULAR]
+                return [{"symbol": s, "name": n, "market": "matieres", "precision": p} for s, (n, p) in FUTURES.items()] + \
+                    [{"symbol": s, "name": s, "market": "crypto", "precision": 2} for s in POPULAR]
         return self._symbols
 
     async def get_history(self, symbol: str, tf: str, start_ms: int, end_ms: int) -> np.ndarray:
@@ -73,11 +90,13 @@ class BinanceConnector(Connector):
         # Les pages de 1000 bougies sont téléchargées en parallèle (6 à la fois) pour aller vite.
         pages = [(a, min(end_ms, a + 1000 * step - 1)) for a in range(start_ms // step * step, end_ms + 1, 1000 * step)]
         sem = asyncio.Semaphore(6)
+        future = symbol.upper() in FUTURES
+        path, hosts = ("/fapi/v1/klines", FUT_REST) if future else ("/api/v3/klines", REST_HOSTS)
 
         async def page(a: int, b: int) -> np.ndarray:
             async with sem:
-                data = await self._get("/api/v3/klines", {
-                    "symbol": symbol.upper(), "interval": INTERVALS[tf], "startTime": a, "endTime": b, "limit": 1000})
+                data = await self._get(path, {
+                    "symbol": symbol.upper(), "interval": INTERVALS[tf], "startTime": a, "endTime": b, "limit": 1000}, hosts)
             if not data:
                 return EMPTY
             return np.array([[k[0], k[1], k[2], k[3], k[4], k[5]] for k in data], dtype=np.float64)  # type: ignore[union-attr]
@@ -89,7 +108,8 @@ class BinanceConnector(Connector):
         channel = f"{symbol.lower()}@kline_{INTERVALS[tf]}"
         attempt = 0
         while True:
-            host = WS_HOSTS[attempt % len(WS_HOSTS)]
+            hosts = FUT_WS if symbol.upper() in FUTURES else WS_HOSTS
+            host = hosts[attempt % len(hosts)]
             try:
                 async with websockets.connect(f"{host}/{channel}", ping_interval=20, open_timeout=10) as ws:
                     attempt = 0

@@ -41,11 +41,10 @@ Voir [DEPLOIEMENT.md](DEPLOIEMENT.md) : GitHub + Firebase (connexion Google) + R
 
 | Source | Marchés | Temps réel | Remarque |
 | --- | --- | --- | --- |
-| Binance | Crypto | Oui (WebSocket) | Sans clé |
-| Dukascopy | Forex, or, indices, pétrole | Non (différé) | Lent au premier téléchargement, puis en cache |
-| Yahoo Finance | Actions, indices | Différé | 1 minute limité à 7 jours, 5-30 minutes à 60 jours |
-| MetaTrader 5 | Forex, indices, matières premières | Oui | `pip install MetaTrader5` + terminal MT5 ouvert |
-| Twelve Data | Actions | Oui (quota) | Clé gratuite dans `.env` |
+| Binance | Crypto, or, argent, pétrole, cuivre, gaz | Oui (WebSocket) | Sans clé. Les matières premières sont des contrats perpétuels cotés en continu (historique depuis fin 2025) |
+| Forex temps réel | 28 paires de devises | Oui (une cotation par seconde) | Historique Yahoo, cotations Swissquote. 1 minute limité à 7 jours, 5-30 minutes à 60 jours |
+| MetaTrader 5 | Tout ce que propose ton courtier | Oui | Version locale Windows uniquement : `pip install MetaTrader5` + terminal MT5 ouvert |
+| Dukascopy | Forex, or, pétrole | Non | Historique long mais lent, et le serveur bloque les requêtes répétées |
 
 ## Réglages
 

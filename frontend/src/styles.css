@@ -330,3 +330,15 @@ button svg { flex: none; }
   .top .brand, .ph-ohlc > b:last-child, .clock { display: none; }
   .range-bar button { padding: 3px 5px; }
 }
+
+/* ---------- menu du dessin sélectionné */
+.draw-bar {
+  position: absolute; left: 50%; top: 82px; transform: translateX(-50%); z-index: 8; display: flex; align-items: center; gap: 3px;
+  padding: 4px 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+}
+.draw-bar .swatch { width: 18px; height: 18px; min-width: 0; padding: 0; border-radius: 50%; border: 2px solid transparent; }
+.draw-bar .swatch.on { border-color: var(--text); }
+.draw-bar .swatch:hover:not(:disabled) { filter: brightness(1.15); }
+.draw-bar button.icon { width: 28px; height: 26px; padding: 0; }
+.draw-bar .stroke { display: block; width: 16px; background: currentColor; border-radius: 2px; }
+.draw-bar .danger:hover:not(:disabled) { color: var(--down); background: rgba(239, 83, 80, 0.15); }
