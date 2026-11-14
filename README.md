@@ -22,6 +22,10 @@ Pour développer l'interface avec rechargement automatique : `cd frontend && npm
 
 Tests du moteur : `.venv\Scripts\python -m pytest tests`
 
+## Mettre en ligne
+
+Voir [DEPLOIEMENT.md](DEPLOIEMENT.md) : GitHub + Firebase (connexion Google) + Render, le tout gratuit.
+
 ## Dossiers
 
 | Dossier | Rôle |

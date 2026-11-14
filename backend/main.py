@@ -21,7 +21,8 @@ from connectors import REGISTRY, TF_SECONDS, ConnectorError, get_connector, tf_m
 from engine import BUILTIN, TEMPLATE, BacktestConfig, run_backtest, run_custom
 
 from . import auth, db
-from .config import ALLOW_CUSTOM_CODE, AUTH_REQUIRED, LOCAL_USER_ID, ROOT
+from .config import (ALLOW_CUSTOM_CODE, AUTH_REQUIRED, FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_ENABLED,
+                     LOCAL_USER_ID, MAX_BARS, ROOT)
 from .store import get_candles
 
 
@@ -46,21 +47,39 @@ def _fail(exc: Exception) -> HTTPException:
 # ------------------------------------------------------------------ comptes
 @app.get("/api/auth/config")
 async def auth_config() -> dict:
-    return {"auth_required": AUTH_REQUIRED, "custom_code": ALLOW_CUSTOM_CODE}
+    firebase = None
+    if FIREBASE_ENABLED:
+        from . import firebase_app
+
+        project = firebase_app.project_id()
+        firebase = {"apiKey": FIREBASE_API_KEY, "projectId": project,
+                    "authDomain": FIREBASE_AUTH_DOMAIN or f"{project}.firebaseapp.com"}
+    return {"auth_required": AUTH_REQUIRED, "custom_code": ALLOW_CUSTOM_CODE, "firebase": firebase}
+
+
+def _local_accounts_only() -> None:
+    if FIREBASE_ENABLED:
+        raise HTTPException(400, "Sur cette version, la connexion se fait avec Google.")
 
 
 @app.post("/api/auth/register")
 def auth_register(email: str = Body(...), password: str = Body(...)) -> dict:
+    _local_accounts_only()
     return {"token": auth.make_token(auth.register(email, password))}
 
 
 @app.post("/api/auth/login")
 def auth_login(email: str = Body(...), password: str = Body(...)) -> dict:
+    _local_accounts_only()
     return {"token": auth.make_token(auth.login(email, password))}
 
 
 @app.get("/api/auth/me")
-def auth_me(user_id: int = User) -> dict:
+def auth_me(user_id: auth.UserId = User) -> dict:
+    if FIREBASE_ENABLED:
+        from . import firebase_app
+
+        return {"user_id": user_id, "email": firebase_app.email_of(str(user_id)), "local": False}
     row = db.conn().execute("SELECT email FROM users WHERE user_id=?", (user_id,)).fetchone()
     return {"user_id": user_id, "email": row["email"] if row else "", "local": user_id == LOCAL_USER_ID}
 
@@ -85,12 +104,13 @@ async def symbols(source: str, _: int = User) -> list[dict]:
 
 @app.get("/api/candles")
 async def candles(source: str, symbol: str, tf: str, start: int | None = None, end: int | None = None,
-                  limit: int = Query(default=3000, ge=1, le=2_000_000), user_id: int = User) -> Response:
+                  limit: int = Query(default=3000, ge=1, le=2_000_000), user_id: auth.UserId = User) -> Response:
     """Bougies en binaire (float64, 6 colonnes) : bien plus léger et rapide à lire que du JSON."""
     try:
         step = tf_ms(tf)
         end_ms = end if end is not None else int(time.time() * 1000)
-        start_ms = start if start is not None else end_ms - limit * step
+        limit = min(limit, MAX_BARS)
+        start_ms = max(start if start is not None else end_ms - limit * step, end_ms - MAX_BARS * step)
         rows = await get_candles(user_id, source, symbol, tf, start_ms, end_ms)
         if start is None and len(rows) > limit:
             rows = rows[-limit:]
@@ -103,7 +123,7 @@ async def candles(source: str, symbol: str, tf: str, start: int | None = None, e
 @app.websocket("/ws/stream")
 async def stream(ws: WebSocket, source: str, symbol: str, tf: str, token: str | None = None) -> None:
     """Flux temps réel. Les mises à jour sont regroupées : un envoi toutes les 100 ms au maximum."""
-    if AUTH_REQUIRED and not (token and auth.read_token(token)):
+    if AUTH_REQUIRED and not await asyncio.to_thread(auth.identify, token):
         await ws.close(code=4401)
         return
     await ws.accept()
@@ -155,26 +175,26 @@ def _json_safe(value):
 
 
 @app.get("/api/strategies")
-def strategies(user_id: int = User) -> dict:
+def strategies(user_id: auth.UserId = User) -> dict:
     return {"builtin": [{"id": k, "label": v["label"], "params": v["params"]} for k, v in BUILTIN.items()],
             "template": TEMPLATE, "custom": db.list_strategies(user_id), "custom_code": ALLOW_CUSTOM_CODE}
 
 
 @app.post("/api/strategies")
-def strategy_save(name: str = Body(...), code: str = Body(...), user_id: int = User) -> dict:
+def strategy_save(name: str = Body(...), code: str = Body(...), user_id: auth.UserId = User) -> dict:
     if not name.strip():
         raise HTTPException(400, "Donne un nom à la stratégie.")
     return {"id": db.save_strategy(user_id, name.strip(), code)}
 
 
 @app.delete("/api/strategies/{strategy_id}")
-def strategy_delete(strategy_id: int, user_id: int = User) -> dict:
-    db.delete_strategy(user_id, strategy_id)
+def strategy_delete(strategy_id: str, user_id: auth.UserId = User) -> dict:
+    db.delete_strategy(user_id, strategy_id if FIREBASE_ENABLED else int(strategy_id))
     return {"ok": True}
 
 
 @app.post("/api/backtest")
-async def backtest_start(payload: dict = Body(...), user_id: int = User) -> dict:
+async def backtest_start(payload: dict = Body(...), user_id: auth.UserId = User) -> dict:
     """Lance un backtest en arrière-plan et renvoie un identifiant de suivi."""
     job_id = uuid.uuid4().hex
     job = {"user_id": user_id, "status": "running", "progress": 0.0, "result": None, "error": None, "cancel": False}
@@ -187,7 +207,7 @@ async def backtest_start(payload: dict = Body(...), user_id: int = User) -> dict
         try:
             source, symbol, tf = payload["source"], payload["symbol"], payload["tf"]
             end_ms = int(payload.get("end") or time.time() * 1000)
-            start_ms = int(payload.get("start") or end_ms - 5000 * tf_ms(tf))
+            start_ms = max(int(payload.get("start") or end_ms - 5000 * tf_ms(tf)), end_ms - MAX_BARS * tf_ms(tf))
             data = await get_candles(user_id, source, symbol, tf, start_ms, end_ms)
             if len(data) < 50:
                 raise ValueError("Pas assez de données sur cette période (50 bougies minimum).")
@@ -230,7 +250,7 @@ async def backtest_start(payload: dict = Body(...), user_id: int = User) -> dict
 
 
 @app.get("/api/backtest/{job_id}")
-async def backtest_status(job_id: str, user_id: int = User) -> dict:
+async def backtest_status(job_id: str, user_id: auth.UserId = User) -> dict:
     job = JOBS.get(job_id)
     if not job or job["user_id"] != user_id:
         raise HTTPException(404, "Backtest introuvable.")
@@ -238,7 +258,7 @@ async def backtest_status(job_id: str, user_id: int = User) -> dict:
 
 
 @app.delete("/api/backtest/{job_id}")
-async def backtest_cancel(job_id: str, user_id: int = User) -> dict:
+async def backtest_cancel(job_id: str, user_id: auth.UserId = User) -> dict:
     job = JOBS.get(job_id)
     if job and job["user_id"] == user_id:
         job["cancel"] = True
@@ -247,40 +267,40 @@ async def backtest_cancel(job_id: str, user_id: int = User) -> dict:
 
 # ------------------------------------------------------------------ sauvegardes
 @app.get("/api/drawings")
-def drawings_get(source: str, symbol: str, user_id: int = User) -> list:
+def drawings_get(source: str, symbol: str, user_id: auth.UserId = User) -> list:
     return db.get_drawings(user_id, source, symbol)
 
 
 @app.put("/api/drawings")
-def drawings_put(source: str, symbol: str, data: list = Body(...), user_id: int = User) -> dict:
+def drawings_put(source: str, symbol: str, data: list = Body(...), user_id: auth.UserId = User) -> dict:
     db.set_drawings(user_id, source, symbol, data)
     return {"ok": True}
 
 
 @app.get("/api/journal")
-def journal_get(user_id: int = User) -> list[dict]:
+def journal_get(user_id: auth.UserId = User) -> list[dict]:
     return db.list_journal(user_id)
 
 
 @app.post("/api/journal")
-def journal_add(payload: dict = Body(...), user_id: int = User) -> dict:
+def journal_add(payload: dict = Body(...), user_id: auth.UserId = User) -> dict:
     return {"id": db.add_journal(user_id, str(payload.get("kind", "trade")), str(payload.get("source", "")),
                                  str(payload.get("symbol", "")), str(payload.get("tf", "")), payload.get("data") or {})}
 
 
 @app.delete("/api/journal")
-def journal_clear(user_id: int = User) -> dict:
+def journal_clear(user_id: auth.UserId = User) -> dict:
     db.clear_journal(user_id)
     return {"ok": True}
 
 
 @app.get("/api/settings")
-def settings_get(user_id: int = User) -> dict:
+def settings_get(user_id: auth.UserId = User) -> dict:
     return db.get_settings(user_id)
 
 
 @app.put("/api/settings")
-def settings_put(data: dict = Body(...), user_id: int = User) -> dict:
+def settings_put(data: dict = Body(...), user_id: auth.UserId = User) -> dict:
     db.set_settings(user_id, data)
     return {"ok": True}
 

@@ -17,7 +17,7 @@ import numpy as np
 from connectors import ConnectorError, clean, get_connector, tf_ms
 from connectors.base import EMPTY
 
-from .config import DATA_DIR
+from .config import CACHE_MB, DATA_DIR, SHARED_CANDLES
 
 CANDLE_DIR = DATA_DIR / "candles"
 _SAFE = re.compile(r"[^A-Za-z0-9_.\-]")
@@ -34,7 +34,7 @@ class CandleStore:
 
     def _path(self, key: tuple) -> Path:
         user_id, source, symbol, tf = key
-        folder = CANDLE_DIR / f"user_{int(user_id)}" / _SAFE.sub("_", source)
+        folder = CANDLE_DIR / ("user_" + _SAFE.sub("_", str(user_id))) / _SAFE.sub("_", source)
         folder.mkdir(parents=True, exist_ok=True)
         return folder / f"{_SAFE.sub('_', symbol)}_{tf}.npy"
 
@@ -52,6 +52,7 @@ class CandleStore:
                 except Exception:
                     rows, meta = EMPTY, {}  # fichier abîmé : il sera retéléchargé
             self._cache[key], self._meta[key] = rows, meta
+            self._trim(key)
             return rows, meta
 
     def save(self, key: tuple, rows: np.ndarray, meta: dict) -> None:
@@ -61,7 +62,20 @@ class CandleStore:
         tmp.replace(path)
         path.with_suffix(".json").write_text(json.dumps(meta), encoding="utf-8")
         with self._lock:
+            self._cache.pop(key, None)  # réinséré en dernier : c'est la série la plus récemment utilisée
             self._cache[key], self._meta[key] = rows, meta
+            self._trim(key)
+
+    def _trim(self, keep: tuple) -> None:
+        """Limite la mémoire : les séries les plus anciennes sortent du cache (elles restent sur disque)."""
+        limit = CACHE_MB * 1024 * 1024
+        total = sum(a.nbytes for a in self._cache.values())
+        for key in list(self._cache):
+            if total <= limit:
+                break
+            if key != keep:
+                total -= self._cache.pop(key).nbytes
+                self._meta.pop(key, None)
 
     def lock(self, key: tuple) -> asyncio.Lock:
         if key not in self._locks:
@@ -72,7 +86,7 @@ class CandleStore:
 STORE = CandleStore()
 
 
-async def get_candles(user_id: int, source: str, symbol: str, tf: str, start_ms: int, end_ms: int) -> np.ndarray:
+async def get_candles(user_id: int | str, source: str, symbol: str, tf: str, start_ms: int, end_ms: int) -> np.ndarray:
     """Bougies de la plage demandée. Ne télécharge que ce qui manque (avant et après ce qui est stocké)."""
     connector = get_connector(source)
     step = tf_ms(tf)
@@ -80,7 +94,7 @@ async def get_candles(user_id: int, source: str, symbol: str, tf: str, start_ms:
     end_ms = min(end_ms, now)
     if start_ms > end_ms:
         return EMPTY
-    key = (user_id, source, symbol, tf)
+    key = (0 if SHARED_CANDLES else user_id, source, symbol, tf)
     async with STORE.lock(key):
         rows, meta = STORE.load(key)
         cov_start, cov_end = meta.get("start"), meta.get("end")

@@ -37,6 +37,28 @@ const TOKEN_KEY = 'bbc_token'
 export const getToken = (): string => localStorage.getItem(TOKEN_KEY) ?? ''
 export const setToken = (t: string): void => (t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY))
 
+// Renouvellement du jeton (connexion Google) : appelé si le serveur répond « non connecté ».
+let refresher: (() => Promise<string>) | null = null
+export const setRefresher = (fn: () => Promise<string>): void => { refresher = fn }
+
+/** Envoie une requête ; si la session a expiré, renouvelle le jeton et réessaie une fois. */
+async function send(path: string, init: () => RequestInit): Promise<Response> {
+  let r: Response
+  try {
+    r = await fetch(path, init())
+    if (r.status === 401 && refresher) {
+      const token = await refresher().catch(() => '')
+      if (token) {
+        setToken(token)
+        r = await fetch(path, init())
+      }
+    }
+  } catch {
+    throw new Error('Serveur injoignable. Vérifie ta connexion, ou patiente : le serveur gratuit met jusqu’à une minute à se réveiller.')
+  }
+  return r
+}
+
 function headers(json = false): HeadersInit {
   const h: Record<string, string> = {}
   if (json) h['Content-Type'] = 'application/json'
@@ -59,12 +81,7 @@ async function fail(r: Response): Promise<never> {
 }
 
 export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  let r: Response
-  try {
-    r = await fetch(path, { method, headers: headers(body !== undefined), body: body !== undefined ? JSON.stringify(body) : undefined })
-  } catch {
-    throw new Error('Serveur injoignable. Vérifie que le backend est lancé.')
-  }
+  const r = await send(path, () => ({ method, headers: headers(body !== undefined), body: body !== undefined ? JSON.stringify(body) : undefined }))
   if (!r.ok) return fail(r)
   return (await r.json()) as T
 }
@@ -77,12 +94,7 @@ export async function fetchCandles(
   if (opt.start !== undefined) q.set('start', String(Math.floor(opt.start)))
   if (opt.end !== undefined) q.set('end', String(Math.floor(opt.end)))
   if (opt.limit !== undefined) q.set('limit', String(opt.limit))
-  let r: Response
-  try {
-    r = await fetch(`/api/candles?${q}`, { headers: headers() })
-  } catch {
-    throw new Error('Serveur injoignable. Vérifie que le backend est lancé.')
-  }
+  const r = await send(`/api/candles?${q}`, () => ({ headers: headers() }))
   if (!r.ok) return fail(r)
   const f = new Float64Array(await r.arrayBuffer())
   const n = Math.floor(f.length / 6)

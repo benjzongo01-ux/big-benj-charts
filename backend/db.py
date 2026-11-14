@@ -10,7 +10,7 @@ import sqlite3
 import threading
 import time
 
-from .config import DATA_DIR, LOCAL_USER_ID
+from .config import DATA_DIR, FIREBASE_ENABLED, LOCAL_USER_ID
 
 DB_PATH = DATA_DIR / "app.db"
 _local = threading.local()
@@ -150,3 +150,11 @@ def set_settings(user_id: int, data: dict) -> None:
               "ON CONFLICT (user_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at",
               (user_id, json.dumps(data), now()))
     c.commit()
+
+
+# En ligne, les mêmes fonctions écrivent dans Firestore : le disque du serveur gratuit est effacé à chaque redémarrage.
+if FIREBASE_ENABLED:
+    from .db_firestore import (  # noqa: E402,F401,F811
+        add_journal, clear_journal, delete_strategy, get_drawings, get_settings, init,
+        list_journal, list_strategies, save_strategy, set_drawings, set_settings,
+    )

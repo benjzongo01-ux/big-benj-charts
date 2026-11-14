@@ -13,7 +13,7 @@ interface Props {
 }
 
 interface Builtin { id: string; label: string; params: Record<string, number> }
-interface Custom { id: number; name: string; code: string }
+interface Custom { id: number | string; name: string; code: string }
 interface StrategyList { builtin: Builtin[]; template: string; custom: Custom[]; custom_code: boolean }
 interface BtTrade { side: number; entry_time: number; entry_price: number; exit_time: number; exit_price: number; size: number; pnl: number; fees: number; reason: string }
 interface BtResult { metrics: Record<string, number | null>; trades: BtTrade[]; equity: [number, number][]; bars: number; duration_ms: number }

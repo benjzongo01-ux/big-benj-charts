@@ -1,0 +1,19 @@
+# Déploiement Render (offre gratuite). Render lit ce fichier quand on crée un « Blueprint » depuis le dépôt GitHub.
+services:
+  - type: web
+    name: big-benj-charts
+    runtime: docker
+    plan: free
+    region: frankfurt   # en Europe : l'API Binance refuse les serveurs situés aux États-Unis
+    healthCheckPath: /api/health
+    envVars:
+      - key: REQUIRE_FIREBASE      # le serveur refuse de démarrer sans connexion Google configurée
+        value: "true"
+      - key: ALLOW_CUSTOM_CODE     # jamais de code Python d'utilisateur exécuté sur le serveur public
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FIREBASE_API_KEY      # à coller dans Render (clé web du projet Firebase)
+        sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT   # à coller dans Render (contenu du fichier JSON de compte de service)
+        sync: false

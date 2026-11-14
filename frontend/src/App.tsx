@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, fetchCandles, fmt, fmtDate, getToken, setToken, TF_LABEL, TIMEFRAMES, type SourceInfo, type SymbolInfo } from './api'
 import BottomPanel from './BottomPanel'
 import ChartPane, { type PaneConfig, type PaneHandle, type ReplayState } from './ChartPane'
+import { googleEmail, initGoogle, signInGoogle, signOutGoogle, type FirebaseWebConfig } from './google'
 import { INDICATORS, TOOL_GROUPS } from './overlays'
 import { TradingSession } from './session'
 
@@ -51,7 +52,7 @@ function loadSettings(): Settings {
 }
 
 // ---------------------------------------------------------------- connexion (version publique)
-function Login({ onDone }: { onDone: () => void }): JSX.Element {
+function Login({ onDone, google }: { onDone: () => void; google: boolean }): JSX.Element {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -65,6 +66,40 @@ function Login({ onDone }: { onDone: () => void }): JSX.Element {
     } catch (err) {
       setError((err as Error).message)
     }
+  }
+  const [busy, setBusy] = useState(false)
+  const withGoogle = async (): Promise<void> => {
+    setBusy(true)
+    setError('')
+    try {
+      await signInGoogle()
+      onDone()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (google) {
+    return (
+      <div className="login">
+        <form onSubmit={(e) => e.preventDefault()}>
+          <div className="brand big"><span className="logo">B</span>Big Benj Charts</div>
+          <p className="login-text">Backtesting, replay et analyse des marchés en temps réel.</p>
+          <button type="button" className="google" onClick={() => void withGoogle()} disabled={busy}>
+            <svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
+              <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.2C12.4 13.6 17.7 9.5 24 9.5z" />
+              <path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-3.1-.4-4.6H24v9h12.4c-.5 2.9-2.2 5.3-4.6 7l7.6 5.9c4.4-4.1 6.7-10.1 6.7-17.3z" />
+              <path fill="#FBBC05" d="M10.5 28.6c-.5-1.4-.8-3-.8-4.6s.3-3.2.8-4.6l-7.9-6.2C.9 16.5 0 20.1 0 24s.9 7.5 2.6 10.8l7.9-6.2z" />
+              <path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.9 2.3-8.3 2.3-6.3 0-11.6-4.2-13.5-9.9l-7.9 6.2C6.5 42.6 14.6 48 24 48z" />
+            </svg>
+            {busy ? 'Connexion…' : 'Continuer avec Google'}
+          </button>
+          {error && <div className="form-error">{error}</div>}
+          <small className="muted">Ton compte est créé automatiquement à la première connexion.</small>
+        </form>
+      </div>
+    )
   }
   return (
     <div className="login">
@@ -193,6 +228,8 @@ function Watchlist(props: { items: WatchItem[]; current: PaneConfig; onPick: (w:
 // ---------------------------------------------------------------- application
 export default function App(): JSX.Element {
   const [ready, setReady] = useState<'boot' | 'login' | 'ok'>('boot')
+  const [google, setGoogle] = useState(false)
+  const googleReady = useRef(false)
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [sources, setSources] = useState<SourceInfo[]>([])
   const [activeIdx, setActiveIdx] = useState(0)
@@ -221,8 +258,22 @@ export default function App(): JSX.Element {
   // Démarrage : mode d'authentification, réglages sauvegardés, sources disponibles.
   const boot = useCallback(async () => {
     try {
-      const conf = await api<{ auth_required: boolean }>('/api/auth/config')
-      if (conf.auth_required) {
+      const conf = await api<{ auth_required: boolean; firebase: FirebaseWebConfig | null }>('/api/auth/config')
+      if (conf.firebase) {
+        // Version en ligne : la session Google est restaurée si elle existe, sinon écran de connexion.
+        setGoogle(true)
+        if (!googleReady.current) {
+          const signedIn = await initGoogle(conf.firebase)
+          googleReady.current = true
+          if (!signedIn) {
+            setReady('login')
+            return
+          }
+        } else if (!getToken()) {
+          setReady('login')
+          return
+        }
+      } else if (conf.auth_required) {
         try {
           await api('/api/auth/me')
         } catch {
@@ -318,7 +369,7 @@ export default function App(): JSX.Element {
   }, [pane, draw, replay.active, replay.playing])
 
   if (ready === 'boot') return <div className="splash"><span className="spinner" />Big Benj Charts</div>
-  if (ready === 'login') return <Login onDone={() => { setReady('boot'); void boot() }} />
+  if (ready === 'login') return <Login google={google} onDone={() => { setReady('boot'); void boot() }} />
 
   const toggleWatch = (s: { symbol: string; name: string; precision: number }, source: string): void => {
     const exists = settings.watchlist.some((w) => w.source === source && w.symbol === s.symbol)
@@ -368,7 +419,10 @@ export default function App(): JSX.Element {
         <button className="icon" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())} title="Plein écran">⛶</button>
         <button className={`icon${showBottom ? ' on' : ''}`} onClick={() => setShowBottom(!showBottom)} title="Panneau du bas">▁</button>
         <button className={`icon${showRight ? ' on' : ''}`} onClick={() => setShowRight(!showRight)} title="Liste de surveillance">▕</button>
-        {getToken() && <button className="icon" onClick={() => { setToken(''); location.reload() }} title="Se déconnecter">⎋</button>}
+        {getToken() && (
+          <button className="icon" title={google ? `Se déconnecter (${googleEmail()})` : 'Se déconnecter'}
+            onClick={() => void (google ? signOutGoogle() : Promise.resolve(setToken(''))).then(() => location.reload())}>⎋</button>
+        )}
       </header>
 
       {/* ------------------------------------------------ contrôles du replay */}

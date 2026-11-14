@@ -15,7 +15,10 @@ import time
 from fastapi import Header, HTTPException, Query
 
 from . import db
-from .config import AUTH_REQUIRED, LOCAL_USER_ID, SECRET_KEY
+from .config import AUTH_REQUIRED, FIREBASE_ENABLED, LOCAL_USER_ID, SECRET_KEY
+
+#: Identifiant d'utilisateur : nombre en local (SQLite), texte en ligne (Firebase).
+UserId = int | str
 
 TOKEN_DAYS = 30
 
@@ -74,10 +77,21 @@ def login(email: str, password: str) -> int:
     return int(row["user_id"])
 
 
-def current_user(authorization: str | None = Header(default=None), token: str | None = Query(default=None)) -> int:
+def identify(token: str | None) -> UserId | None:
+    """Renvoie l'utilisateur correspondant à un jeton (Google en ligne, session locale sinon)."""
+    if not token:
+        return None
+    if FIREBASE_ENABLED:
+        from . import firebase_app
+
+        return firebase_app.verify(token)
+    return read_token(token)
+
+
+def current_user(authorization: str | None = Header(default=None), token: str | None = Query(default=None)) -> UserId:
     """Dépendance FastAPI : identifie l'utilisateur de la requête."""
     raw = token or (authorization[7:] if authorization and authorization.lower().startswith("bearer ") else None)
-    user_id = read_token(raw) if raw else None
+    user_id = identify(raw)
     if user_id:
         return user_id
     if AUTH_REQUIRED:
