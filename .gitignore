@@ -6,3 +6,7 @@ data/
 .env
 node_modules/
 frontend/dist/
+
+# Clés Firebase : ne jamais les versionner
+*firebase-adminsdk*.json
+serviceAccount*.json
