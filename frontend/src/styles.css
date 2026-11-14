@@ -342,3 +342,11 @@ button svg { flex: none; }
 .draw-bar button.icon { width: 28px; height: 26px; padding: 0; }
 .draw-bar .stroke { display: block; width: 16px; background: currentColor; border-radius: 2px; }
 .draw-bar .danger:hover:not(:disabled) { color: var(--down); background: rgba(239, 83, 80, 0.15); }
+
+/* ---------- cet appareil : notifications et installation */
+.device { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.device-state { display: flex; align-items: flex-start; gap: 4px; font-size: 12px; line-height: 1.4; }
+.device-state .dot { margin-top: 4px; }
+.device button { border: 1px solid var(--border); padding: 6px 8px; white-space: normal; }
+.device button.primary { border-color: var(--accent); }
+.device .side-note { padding: 0; }

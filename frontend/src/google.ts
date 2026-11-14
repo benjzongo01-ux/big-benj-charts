@@ -1,5 +1,6 @@
 // Connexion « Continuer avec Google » (Firebase Authentication).
 // La bibliothèque Firebase n'est téléchargée que sur la version en ligne : en local, rien n'est chargé.
+import type { FirebaseApp } from 'firebase/app'
 import type { Auth } from 'firebase/auth'
 import { setRefresher, setToken } from './api'
 
@@ -7,14 +8,22 @@ export interface FirebaseWebConfig {
   apiKey: string
   authDomain: string
   projectId: string
+  /** Présents sur la version en ligne : nécessaires aux notifications. */
+  messagingSenderId?: string
+  appId?: string
 }
 
 let auth: Auth | null = null
+let app: FirebaseApp | null = null
+
+/** Application Firebase déjà initialisée (null en version locale). */
+export const firebaseApp = (): FirebaseApp | null => app
 
 /** Prépare Firebase et indique si une session Google est déjà ouverte. */
 export async function initGoogle(config: FirebaseWebConfig): Promise<boolean> {
   const [{ initializeApp }, m] = await Promise.all([import('firebase/app'), import('firebase/auth')])
-  auth = m.getAuth(initializeApp(config))
+  app = initializeApp(config)
+  auth = m.getAuth(app)
   auth.languageCode = 'fr'
   // Le jeton de session dure une heure : Firebase le renouvelle, on garde toujours le dernier.
   m.onIdTokenChanged(auth, (user) => {

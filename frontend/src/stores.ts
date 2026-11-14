@@ -175,7 +175,9 @@ class AlertStore extends Store {
   /** Appelé au déclenchement (toast dans l'application). */
   onTrigger: ((text: string) => void) | null = null
   private last = new Map<string, number>()
-  private saveTimer = 0
+  private queue: Promise<unknown> = Promise.resolve()
+  private pending = 0                       // opérations envoyées, pas encore confirmées
+  private recent = new Map<string, number>() // alertes déjà signalées ici (évite le doublon avec le serveur)
 
   async load(): Promise<void> {
     try {
@@ -187,11 +189,35 @@ class AlertStore extends Store {
     this.emit()
     void this.catchUp()
     window.setInterval(() => savePref(SEEN_KEY, { t: Date.now() }), 30_000)
+    // Synchronisation entre appareils : la liste du serveur est relue régulièrement et au retour sur l'onglet.
+    window.setInterval(() => void this.sync(), 15_000)
+    document.addEventListener('visibilitychange', () => void this.sync())
   }
 
-  private save(): void {
-    window.clearTimeout(this.saveTimer)
-    this.saveTimer = window.setTimeout(() => void api('/api/alerts', 'PUT', this.alerts).catch(() => undefined), 500)
+  /** Relit la liste du compte (alertes posées ou déclenchées depuis un autre appareil). */
+  async sync(): Promise<void> {
+    if (document.hidden || this.pending) return
+    try {
+      const list = await api<Alert[]>('/api/alerts')
+      if (!this.pending) this.adopt(list)
+    } catch {
+      /* hors ligne : on réessaiera */
+    }
+  }
+
+  private adopt(list: Alert[]): void {
+    if (JSON.stringify(list) === JSON.stringify(this.alerts)) return
+    this.alerts = list
+    this.emit()
+  }
+
+  /** Envoie une opération (une alerte à la fois) ; la réponse du serveur fait foi. */
+  private send(run: () => Promise<Alert[]>): void {
+    this.pending++
+    this.queue = this.queue.then(run).then((list) => {
+      this.pending--
+      if (!this.pending) this.adopt(list)
+    }).catch(() => { this.pending-- })
   }
 
   /** Remplace la liste. `record` = l'action entre dans l'historique annuler / rétablir. */
@@ -199,8 +225,15 @@ class AlertStore extends Store {
     const before = this.alerts
     this.alerts = next
     if (record) this.onHistory?.(before, next)
-    this.save()
     this.emit()
+    // Seules les alertes réellement modifiées partent au serveur : deux appareils ne s'écrasent jamais.
+    const old = new Map(before.map((a) => [a.id, a]))
+    next.forEach((a) => {
+      const b = old.get(a.id)
+      if (!b || JSON.stringify(b) !== JSON.stringify(a)) this.send(() => api<Alert[]>('/api/alerts', 'POST', a))
+    })
+    before.filter((b) => !next.some((a) => a.id === b.id))
+      .forEach((b) => this.send(() => api<Alert[]>(`/api/alerts/${encodeURIComponent(b.id)}`, 'DELETE')))
   }
 
   add(a: Omit<Alert, 'id' | 'createdAt' | 'active'>): void {
@@ -244,6 +277,7 @@ class AlertStore extends Store {
   private trigger(hit: Alert[], price: number, late: boolean): void {
     const ids = new Set(hit.map((a) => a.id))
     hit.forEach((a) => {
+      this.recent.set(a.id, Date.now())
       const text = `${a.symbol} ${CONDITION_LABEL[a.condition]} ${fmt(a.price, a.precision)}`
         + (late ? ' (pendant ton absence)' : ` · prix ${fmt(price, a.precision)}`) + (a.message ? ` · ${a.message}` : '')
       this.notify(`Alerte : ${text}`, 'alert')
@@ -257,6 +291,16 @@ class AlertStore extends Store {
     beep()
     // Une alerte « une seule fois » se désactive ; les autres restent armées.
     this.commit(this.alerts.map((a) => (ids.has(a.id) ? { ...a, triggeredAt: Date.now(), active: a.once ? false : a.active } : a)), false)
+  }
+
+  /** Alerte reçue du serveur pendant que l'application est au premier plan. */
+  external(body: string, tag: string): void {
+    if (Date.now() - (this.recent.get(tag) ?? 0) < 60_000) return // déjà signalée par cet appareil
+    this.recent.set(tag, Date.now())
+    this.notify(`Alerte : ${body}`, 'alert')
+    this.onTrigger?.(`🔔 ${body}`)
+    beep()
+    void this.sync()
   }
 
   /** À l'ouverture : vérifie dans l'historique si une alerte a été franchie pendant que l'onglet était fermé. */

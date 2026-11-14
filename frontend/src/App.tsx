@@ -6,6 +6,7 @@ import ChartPane, { type PaneHandle, type ReplayState, type SavedDrawing } from 
 import { AlertDialog, Login, SymbolSearch, type AlertDraft } from './Dialogs'
 import { googleEmail, initGoogle, signOutGoogle, type FirebaseWebConfig } from './google'
 import { hasIcon, Icon } from './icons'
+import { initPush } from './push'
 import { DEFAULT_FAVORITES, EMOJIS, findTool, GROUP_ICON, INDICATORS, TOOL_GROUPS, TOOL_ICON } from './overlays'
 import RightPanel, { SIDE_MAX, SIDE_MIN, type SideTab } from './RightPanel'
 import { TradingSession } from './session'
@@ -225,6 +226,7 @@ export default function App(): JSX.Element {
       if (!alerts.loaded) {
         alerts.onTrigger = (text) => message(text)
         void alerts.load()
+        void initPush(conf.firebase, (body, tag) => alerts.external(body, tag))
       }
       setReady('ok')
     } catch (e) {

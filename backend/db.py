@@ -171,9 +171,22 @@ def set_alerts(user_id: int, data: list) -> None:
     c.commit()
 
 
+# --- Appareils à notifier : uniquement en ligne (Firestore). En local, rien à faire. ---
+def add_token(user_id: int, token: str) -> None:
+    return None
+
+
+def remove_token(user_id: int, token: str) -> None:
+    return None
+
+
+def all_users() -> list:
+    return []
+
+
 # En ligne, les mêmes fonctions écrivent dans Firestore : le disque du serveur gratuit est effacé à chaque redémarrage.
 if FIREBASE_ENABLED:
     from .db_firestore import (  # noqa: E402,F401,F811
-        add_journal, clear_journal, delete_strategy, get_alerts, get_drawings, get_settings, init,
-        list_journal, list_strategies, save_strategy, set_alerts, set_drawings, set_settings,
+        add_journal, add_token, all_users, clear_journal, delete_strategy, get_alerts, get_drawings, get_settings, init,
+        list_journal, list_strategies, remove_token, save_strategy, set_alerts, set_drawings, set_settings,
     )

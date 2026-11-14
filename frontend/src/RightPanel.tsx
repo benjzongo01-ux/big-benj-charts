@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { fmt, fmtDate } from './api'
 import { Icon } from './icons'
+import { canInstall, enablePush, installApp, needsHomeScreen, onPushChange, pushStatus, testPush } from './push'
 import type { TradingSession } from './session'
 import { alerts, CONDITION_LABEL, keyOf, MARKET_LABEL, MARKET_ORDER, marketOf, quotes, type Alert, type PaneConfig, type WatchItem } from './stores'
 
@@ -90,6 +91,49 @@ function Watch({ items, current, onPick, onRemove, onAdd, onNewAlert }: Pick<Pro
   )
 }
 
+// ---------------------------------------------------------------- cet appareil : notifications et installation
+function DeviceBlock(): JSX.Element | null {
+  const [, tick] = useState(0)
+  const [busy, setBusy] = useState(false)
+  const [info, setInfo] = useState('')
+  useEffect(() => onPushChange(() => tick((n) => n + 1)), [])
+  const status = pushStatus()
+  const run = async (fn: () => Promise<string>): Promise<void> => {
+    setBusy(true)
+    try {
+      setInfo(await fn())
+    } catch (e) {
+      setInfo((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+  if (status === 'local' && !canInstall()) return null
+  return (
+    <div className="device">
+      {status === 'on' && <div className="device-state"><span className="dot on" />Cet appareil sonne quand une alerte est atteinte, même application fermée.</div>}
+      {status === 'off' && (
+        <>
+          <div className="device-state"><span className="dot warn" />Cet appareil ne reçoit pas encore les alertes quand l’application est fermée.</div>
+          {needsHomeScreen()
+            ? <div className="side-note">Sur iPhone : ouvre le menu Partager de Safari, choisis « Sur l’écran d’accueil », puis rouvre l’application depuis son icône.</div>
+            : <button className="primary" disabled={busy} onClick={() => void run(async () => ((await enablePush()) === 'on' ? 'Notifications activées sur cet appareil.' : 'Autorisation refusée.'))}>Activer la sonnerie sur cet appareil</button>}
+        </>
+      )}
+      {status === 'denied' && <div className="device-state"><span className="dot bad" />Notifications bloquées pour ce site. Autorise-les dans les réglages du navigateur (icône à gauche de l’adresse), puis recharge la page.</div>}
+      {status === 'unsupported' && <div className="device-state"><span className="dot" />Ce navigateur ne sait pas recevoir de notifications. Utilise Chrome, ou installe l’application.</div>}
+      {status === 'on' && (
+        <button disabled={busy} onClick={() => void run(async () => {
+          const r = await testPush()
+          return r.sent ? `Notification d’essai envoyée à ${r.sent} appareil${r.sent > 1 ? 's' : ''}. Passe sur une autre application pour la voir arriver.` : 'Aucun appareil inscrit pour le moment.'
+        })}>Tester la sonnerie</button>
+      )}
+      {canInstall() && <button disabled={busy} onClick={() => void installApp()}>Installer l’application sur cet appareil</button>}
+      {info && <div className="side-note">{info}</div>}
+    </div>
+  )
+}
+
 // ---------------------------------------------------------------- alertes
 function Alerts({ onNewAlert, onEditAlert }: Pick<Props, 'onNewAlert' | 'onEditAlert'>): JSX.Element {
   useSyncExternalStore(alerts.subscribe, alerts.getVersion)
@@ -99,6 +143,7 @@ function Alerts({ onNewAlert, onEditAlert }: Pick<Props, 'onNewAlert' | 'onEditA
         <button className="icon" onClick={onNewAlert} title="Nouvelle alerte (Alt+A)"><Icon name="plus" size={16} /></button>
       </div>
       <div className="side-list">
+        <DeviceBlock />
         {alerts.alerts.map((a) => (
           <div key={a.id} className={`a-row${a.active ? '' : ' off'}`}>
             <div className="a-main">
@@ -118,7 +163,7 @@ function Alerts({ onNewAlert, onEditAlert }: Pick<Props, 'onNewAlert' | 'onEditA
         {!alerts.alerts.length && (
           <div className="empty">Aucune alerte. Crée-en une avec le bouton +, un clic droit sur le graphique ou Alt+A.</div>
         )}
-        <div className="side-note">Les alertes sont surveillées tant qu’un onglet Big Benj Charts est ouvert. À la réouverture, celles franchies entre-temps sont signalées.</div>
+        <div className="side-note">Tes alertes sont les mêmes sur tous les appareils connectés à ton compte. Crypto, forex et matières premières sont surveillés par le serveur toutes les 10 secondes.</div>
       </div>
     </>
   )

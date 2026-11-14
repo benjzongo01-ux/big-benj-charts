@@ -1,6 +1,7 @@
 """Configuration : lit le fichier .env (aucune clé ni mot de passe dans le code)."""
 from __future__ import annotations
 
+import json
 import os
 import secrets
 from pathlib import Path
@@ -49,6 +50,17 @@ FIREBASE_SERVICE_ACCOUNT = os.getenv("FIREBASE_SERVICE_ACCOUNT", "").strip()
 FIREBASE_API_KEY = os.getenv("FIREBASE_API_KEY", "").strip()
 FIREBASE_AUTH_DOMAIN = os.getenv("FIREBASE_AUTH_DOMAIN", "").strip()
 FIREBASE_ENABLED = bool(FIREBASE_SERVICE_ACCOUNT and FIREBASE_API_KEY)
+
+
+def _firebase_web() -> dict:
+    """Identifiants publics de l'application web Firebase (pour les notifications) : .env, sinon fichier du dépôt."""
+    path = Path(__file__).with_name("firebase_web.json")
+    data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return {"messagingSenderId": os.getenv("FIREBASE_SENDER_ID", data.get("messagingSenderId", "")),
+            "appId": os.getenv("FIREBASE_APP_ID", data.get("appId", ""))}
+
+
+FIREBASE_WEB = _firebase_web()
 if FIREBASE_ENABLED:
     AUTH_REQUIRED = True  # en ligne, personne n'entre sans compte
 elif os.getenv("REQUIRE_FIREBASE", "false").lower() in ("1", "true", "yes", "oui"):

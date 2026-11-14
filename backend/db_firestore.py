@@ -107,3 +107,25 @@ def get_alerts(user_id) -> list:
 
 def set_alerts(user_id, data: list) -> None:
     _user(user_id).set({"alerts": json.dumps(data), "updated_at": now()}, merge=True)
+
+
+# --- Appareils à notifier (jetons Firebase Cloud Messaging) ----------------
+def add_token(user_id, token: str) -> None:
+    from google.cloud.firestore import ArrayUnion
+
+    _user(user_id).set({"tokens": ArrayUnion([token]), "updated_at": now()}, merge=True)
+
+
+def remove_token(user_id, token: str) -> None:
+    from google.cloud.firestore import ArrayRemove
+
+    _user(user_id).set({"tokens": ArrayRemove([token])}, merge=True)
+
+
+def all_users() -> list[tuple[str, list, list]]:
+    """Alertes et appareils de tous les comptes : lu une fois au démarrage du serveur."""
+    out = []
+    for doc in firestore().collection("users").stream():
+        data = doc.to_dict() or {}
+        out.append((doc.id, json.loads(data.get("alerts") or "[]"), list(data.get("tokens") or [])))
+    return out

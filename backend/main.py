@@ -20,8 +20,8 @@ from fastapi.staticfiles import StaticFiles
 from connectors import REGISTRY, TF_SECONDS, ConnectorError, get_connector, tf_ms
 from engine import BUILTIN, TEMPLATE, BacktestConfig, run_backtest, run_custom
 
-from . import auth, db
-from .config import (ALLOW_CUSTOM_CODE, AUTH_REQUIRED, FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_ENABLED,
+from . import alerts, auth, db
+from .config import (ALLOW_CUSTOM_CODE, AUTH_REQUIRED, FIREBASE_API_KEY, FIREBASE_AUTH_DOMAIN, FIREBASE_ENABLED, FIREBASE_WEB,
                      LOCAL_USER_ID, MAX_BARS, ROOT)
 from .store import get_candles
 
@@ -29,7 +29,11 @@ from .store import get_candles
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     db.init()
+    # En ligne : le serveur surveille les alertes et notifie les téléphones.
+    task = asyncio.create_task(alerts.worker()) if FIREBASE_ENABLED else None
     yield
+    if task:
+        task.cancel()
 
 
 app = FastAPI(title="Big Benj Charts", lifespan=lifespan)
@@ -53,7 +57,7 @@ async def auth_config() -> dict:
 
         project = firebase_app.project_id()
         firebase = {"apiKey": FIREBASE_API_KEY, "projectId": project,
-                    "authDomain": FIREBASE_AUTH_DOMAIN or f"{project}.firebaseapp.com"}
+                    "authDomain": FIREBASE_AUTH_DOMAIN or f"{project}.firebaseapp.com", **FIREBASE_WEB}
     return {"auth_required": AUTH_REQUIRED, "custom_code": ALLOW_CUSTOM_CODE, "firebase": firebase}
 
 
@@ -296,15 +300,45 @@ def journal_clear(user_id: auth.UserId = User) -> dict:
 
 @app.get("/api/alerts")
 def alerts_get(user_id: auth.UserId = User) -> list:
-    return db.get_alerts(user_id)
+    return alerts.list_alerts(user_id)
 
 
-@app.put("/api/alerts")
-def alerts_put(data: list = Body(...), user_id: auth.UserId = User) -> dict:
-    if len(data) > 200:
-        raise HTTPException(400, "200 alertes au maximum.")
-    db.set_alerts(user_id, data)
+@app.post("/api/alerts")
+def alerts_upsert(alert: dict = Body(...), user_id: auth.UserId = User) -> list:
+    """Crée ou modifie UNE alerte. Renvoie la liste à jour, identique sur tous les appareils du compte."""
+    try:
+        return alerts.upsert(user_id, alert)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.delete("/api/alerts/{alert_id}")
+def alerts_delete(alert_id: str, user_id: auth.UserId = User) -> list:
+    return alerts.remove(user_id, alert_id)
+
+
+@app.post("/api/push/token")
+def push_register(token: str = Body(..., embed=True), user_id: auth.UserId = User) -> dict:
+    """Enregistre cet appareil pour recevoir les alertes en notification."""
+    if not FIREBASE_ENABLED:
+        return {"ok": False, "devices": 0}
+    if not (20 < len(token) < 4096):
+        raise HTTPException(400, "Jeton de notification invalide.")
+    alerts.add_token(user_id, token)
+    return {"ok": True, "devices": alerts.device_count(user_id)}
+
+
+@app.delete("/api/push/token")
+def push_unregister(token: str = Body(..., embed=True), user_id: auth.UserId = User) -> dict:
+    alerts.remove_token(user_id, token)
     return {"ok": True}
+
+
+@app.post("/api/push/test")
+def push_test(user_id: auth.UserId = User) -> dict:
+    """Envoie une notification d'essai à tous les appareils du compte."""
+    sent = alerts.send_push(user_id, "Big Benj Charts", "Notification d'essai : les alertes sonneront sur cet appareil.", "test")
+    return {"sent": sent, "devices": alerts.device_count(user_id)}
 
 
 @app.get("/api/settings")
@@ -325,10 +359,13 @@ async def health() -> dict:
 
 # ------------------------------------------------------------------ interface compilée
 DIST = ROOT / "frontend" / "dist"
+MEDIA = {".js": "text/javascript", ".webmanifest": "application/manifest+json", ".html": "text/html"}
 if DIST.exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
     @app.get("/{path:path}", include_in_schema=False)
     async def spa(path: str) -> FileResponse:
         file = DIST / path
-        return FileResponse(file if path and file.is_file() else DIST / "index.html")
+        target = file if path and file.is_file() else DIST / "index.html"
+        # La page, le service worker et le manifeste ne sont jamais gardés en cache : les mises à jour arrivent tout de suite.
+        return FileResponse(target, media_type=MEDIA.get(target.suffix), headers={"Cache-Control": "no-cache"})
