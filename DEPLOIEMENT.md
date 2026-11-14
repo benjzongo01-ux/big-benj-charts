@@ -55,6 +55,27 @@ et colle l'adresse Render sans `https://` (par exemple `big-benj-charts.onrender
 
 Ouvre ensuite ton site : le bouton **Continuer avec Google** crée le compte à la première connexion.
 
+## Recevoir les alertes sur le téléphone
+
+1. Sur le téléphone, ouvre le site dans **Chrome** et connecte-toi avec le **même compte Google** que sur l'ordinateur.
+2. Menu de Chrome (les trois points) > **Installer l'application** (ou **Ajouter à l'écran d'accueil**).
+   L'icône Big Benj Charts apparaît avec les autres applications.
+3. Ouvre l'application, puis l'icône réveil de la colonne de droite > **Activer la sonnerie sur cet appareil**,
+   et accepte les notifications.
+4. Appuie sur **Tester la sonnerie**, puis quitte l'application : la notification d'essai doit arriver.
+
+Les alertes posées sur l'ordinateur apparaissent sur le téléphone, et inversement. Quand un prix est atteint,
+le serveur envoie une notification à tous les appareils du compte, même application fermée.
+
+À savoir :
+
+- Le son est celui des notifications du téléphone. Pour qu'il sonne fort : Paramètres Android > Applications >
+  Big Benj Charts > Notifications, et choisis un son et une importance élevée. Désactive aussi l'économie de
+  batterie pour Chrome, sinon Android peut retarder les notifications.
+- Sur iPhone, il faut d'abord ajouter le site à l'écran d'accueil depuis Safari (menu Partager).
+- Le serveur vérifie les prix toutes les 10 secondes. Un pic très bref entre deux vérifications peut être manqué.
+- Tant qu'il reste des alertes actives, le serveur se maintient éveillé. Sans alerte active, il s'endort comme avant.
+
 ## Mettre à jour le site
 
 Chaque envoi sur GitHub redéploie le site tout seul :
