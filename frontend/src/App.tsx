@@ -242,7 +242,6 @@ export default function App(): JSX.Element {
   const [replayDate, setReplayDate] = useState('')
   const [toasts, setToasts] = useState<Toast[]>([])
   const [showRight, setShowRight] = useState(window.innerWidth > 1000)
-  const [showBottom, setShowBottom] = useState(window.innerWidth > 800)
   const session = useMemo(() => new TradingSession(), [])
   const panes = useRef<(PaneHandle | null)[]>([])
   const idx = Math.min(activeIdx, settings.layout - 1)
@@ -417,7 +416,6 @@ export default function App(): JSX.Element {
         <button className="icon" onClick={() => pane()?.screenshot()} title="Capture d’écran">📷</button>
         <button className="icon" onClick={() => update({ theme: settings.theme === 'dark' ? 'light' : 'dark' })} title="Thème clair / sombre">{settings.theme === 'dark' ? '☀' : '🌙'}</button>
         <button className="icon" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())} title="Plein écran">⛶</button>
-        <button className={`icon${showBottom ? ' on' : ''}`} onClick={() => setShowBottom(!showBottom)} title="Panneau du bas">▁</button>
         <button className={`icon${showRight ? ' on' : ''}`} onClick={() => setShowRight(!showRight)} title="Liste de surveillance">▕</button>
         {getToken() && (
           <button className="icon" title={google ? `Se déconnecter (${googleEmail()})` : 'Se déconnecter'}
@@ -488,7 +486,7 @@ export default function App(): JSX.Element {
                 onReplay={(s) => i === idx && setReplay(s)} onMessage={message} />
             ))}
           </div>
-          {showBottom && <BottomPanel config={current} session={session} replay={replay} goTo={(ts) => pane()?.goTo(ts)} onMessage={message} />}
+          <BottomPanel config={current} session={session} replay={replay} goTo={(ts) => pane()?.goTo(ts)} onMessage={message} />
         </div>
 
         {showRight && (

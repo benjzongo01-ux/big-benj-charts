@@ -28,6 +28,21 @@ const CONFIG_FIELDS: [string, string, number][] = [
 ]
 const num = (v: string): number | null => (v.trim() === '' || Number.isNaN(Number(v.replace(',', '.'))) ? null : Number(v.replace(',', '.')))
 
+// --- État du panneau (ouvert/fermé + hauteur), mémorisé dans le navigateur ---
+const PANEL_KEY = 'bbc_panel'
+const MIN_HEIGHT = 160
+const maxHeight = (): number => Math.max(MIN_HEIGHT, Math.round(window.innerHeight * 0.75))
+const clampHeight = (h: number): number => Math.min(maxHeight(), Math.max(MIN_HEIGHT, Math.round(h)))
+
+function loadPanel(): { open: boolean; height: number } {
+  try {
+    const p = JSON.parse(localStorage.getItem(PANEL_KEY) ?? '{}') as { open?: boolean; height?: number }
+    return { open: p.open === true, height: clampHeight(Number(p.height) || 300) }
+  } catch {
+    return { open: false, height: 300 } // stockage indisponible : replié par défaut
+  }
+}
+
 /** Courbe de capital dessinée sur un canvas (léger, net sur tous les écrans). */
 function EquityCurve({ points }: { points: [number, number][] }): JSX.Element {
   const ref = useRef<HTMLCanvasElement>(null)
@@ -80,6 +95,70 @@ function EquityCurve({ points }: { points: [number, number][] }): JSX.Element {
 
 export default function BottomPanel({ config, session, replay, goTo, onMessage }: Props): JSX.Element {
   const [tab, setTab] = useState(0)
+  const [open, setOpen] = useState(() => loadPanel().open)
+  const [height, setHeight] = useState(() => loadPanel().height)
+  const [full, setFull] = useState(false)
+  const drag = useRef<{ y: number; h: number; raf: number; next: number } | null>(null)
+
+  // Mémorise l'état à chaque changement.
+  useEffect(() => {
+    try {
+      localStorage.setItem(PANEL_KEY, JSON.stringify({ open, height }))
+    } catch {
+      /* stockage indisponible (navigation privée) : on continue sans mémoriser */
+    }
+  }, [open, height])
+
+  // Alt+B ouvre ou replie ; Échap quitte le plein écran ; la hauteur suit la taille de la fenêtre.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault()
+        setOpen((o) => !o)
+        setFull(false)
+      } else if (e.key === 'Escape') setFull(false)
+    }
+    const onResize = (): void => setHeight((h) => clampHeight(h))
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('resize', onResize)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('resize', onResize)
+    }
+  }, [])
+
+  const pickTab = (i: number): void => {
+    if (open && i === tab) {
+      setOpen(false)
+      setFull(false)
+    } else {
+      setTab(i)
+      setOpen(true)
+    }
+  }
+
+  // Poignée : la hauteur suit la souris, au plus une mise à jour par image.
+  const onGripDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    e.currentTarget.setPointerCapture(e.pointerId)
+    drag.current = { y: e.clientY, h: height, raf: 0, next: height }
+  }
+  const onGripMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const d = drag.current
+    if (!d) return
+    d.next = clampHeight(d.h + (d.y - e.clientY))
+    if (!d.raf) {
+      d.raf = requestAnimationFrame(() => {
+        d.raf = 0
+        setHeight(d.next)
+      })
+    }
+  }
+  const onGripUp = (): void => {
+    if (drag.current) cancelAnimationFrame(drag.current.raf)
+    if (drag.current) setHeight(drag.current.next)
+    drag.current = null
+  }
+
   const [strategies, setStrategies] = useState<StrategyList | null>(null)
   const [code, setCode] = useState('')
   const [name, setName] = useState('Ma stratégie')
@@ -94,12 +173,27 @@ export default function BottomPanel({ config, session, replay, goTo, onMessage }
   useEffect(loadStrategies, [])
 
   return (
-    <section className="bottom">
+    <section className={`bottom${open ? '' : ' closed'}${open && full ? ' full' : ''}`} style={open && !full ? { height } : undefined}>
+      {open && !full && (
+        <div className="panel-grip" title="Glisser pour redimensionner" onPointerDown={onGripDown} onPointerMove={onGripMove}
+          onPointerUp={onGripUp} onPointerCancel={onGripUp} onDoubleClick={() => setHeight(300)} />
+      )}
       <div className="tabs">
-        {TABS.map((t, i) => <button key={t} className={i === tab ? 'on' : ''} onClick={() => setTab(i)}>{t}</button>)}
+        {TABS.map((t, i) => (
+          <button key={t} className={open && i === tab ? 'on' : ''} onClick={() => pickTab(i)}
+            title={open && i === tab ? 'Replier le panneau' : `Ouvrir ${t}`}>{t}</button>
+        ))}
         <span className="tabs-info">{config.symbol} · {config.tf}{replay.active ? ' · replay' : ''}</span>
+        {open && (
+          <button className="icon" onClick={() => setFull(!full)} title={full ? 'Réduire le panneau (Échap)' : 'Agrandir le panneau en plein écran'}>
+            {full ? '⤡' : '⤢'}
+          </button>
+        )}
+        <button className="icon" onClick={() => { setOpen(!open); setFull(false) }} title={open ? 'Replier le panneau (Alt+B)' : 'Ouvrir le panneau (Alt+B)'}>
+          {open ? '▼' : '▲'}
+        </button>
       </div>
-      <div className="bottom-body">
+      <div className="bottom-body" hidden={!open}>
         <div hidden={tab !== 0} className="fill"><Backtest config={config} strategies={strategies} code={code} goTo={goTo} onMessage={onMessage} /></div>
         {tab === 1 && <Trading config={config} session={session} replay={replay} goTo={goTo} onMessage={onMessage} />}
         {tab === 2 && (

@@ -115,11 +115,19 @@ input:focus, textarea:focus, select:focus { outline: 1px solid var(--accent); }
 .watch .row:hover .del { visibility: visible; }
 
 /* ---------- panneau du bas */
-.bottom { height: 300px; flex: none; border-top: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; }
+.bottom { position: relative; height: 300px; flex: none; border-top: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; }
+.bottom.closed { height: auto; }
+.bottom.closed .tabs { border-bottom: 0; }
+.bottom.full { position: fixed; inset: 0; height: auto; z-index: 40; border-top: 0; }
+.bottom-body[hidden] { display: none; }
+.panel-grip { position: absolute; left: 0; right: 0; top: -4px; height: 8px; cursor: ns-resize; z-index: 5; touch-action: none; }
+.panel-grip::after { content: ''; position: absolute; left: 50%; top: 3px; width: 44px; height: 3px; margin-left: -22px; border-radius: 2px; background: var(--border); }
+.panel-grip:hover::after, .panel-grip:active::after { background: var(--accent); }
 .tabs { display: flex; align-items: center; gap: 2px; padding: 0 6px; border-bottom: 1px solid var(--border); flex: none; overflow-x: auto; }
 .tabs button { border-radius: 0; padding: 8px 12px; border-bottom: 2px solid transparent; }
 .tabs button.on { background: none; border-bottom-color: var(--accent); }
 .tabs-info { margin-left: auto; color: var(--muted); padding-right: 8px; white-space: nowrap; }
+.tabs button.icon { padding: 6px 8px; border-bottom: 0; font-size: 12px; }
 .bottom-body { flex: 1; min-height: 0; }
 .fill, .backtest, .trading, .editor, .journal { height: 100%; }
 .fill[hidden] { display: none; }
@@ -197,7 +205,6 @@ button.google:hover:not(:disabled) { background: #f2f2f2; }
   .brand-name { display: none; }
   .right { position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; }
   .body { position: relative; }
-  .bottom { height: 46vh; }
   .backtest, .trading { flex-direction: column; overflow-y: auto; }
   .bt-form, .ticket { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
   .bt-result, .trade-lists { overflow: visible; }
