@@ -998,12 +998,8 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     if (at) cb.current.onContext({ x: rect.left + plus.x + 20, y: rect.top + plus.y + 12, price: at.price })
   }
 
-  const onMenu = (e: React.MouseEvent): void => {
-    e.preventDefault()
-    const { x, y } = relative(e)
-    const at = priceAt(x, y)
-    if (at) cb.current.onContext({ x: e.clientX, y: e.clientY, price: at.price })
-  }
+  // Clic droit : plus de menu (il est désormais sur le « + » de l'échelle de prix).
+  const onMenu = (e: React.MouseEvent): void => e.preventDefault()
 
   // ---------------------------------------------------------------- commandes exposées
   useImperativeHandle(ref, (): PaneHandle => ({
