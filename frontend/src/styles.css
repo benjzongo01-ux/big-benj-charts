@@ -388,3 +388,84 @@ button svg { flex: none; }
   position: absolute; z-index: 9; min-width: 140px; min-height: 30px; padding: 2px 4px; resize: both; line-height: 1.25;
   background: rgba(19, 23, 34, 0.85); border: 1px solid var(--accent); border-radius: 3px; font-family: inherit;
 }
+
+/* ====================================================================== version téléphone */
+.m-app { display: flex; flex-direction: column; height: 100%; height: 100dvh; background: var(--bg); }
+.m-top {
+  display: flex; align-items: center; gap: 2px; padding: 4px 6px; padding-top: max(4px, env(safe-area-inset-top));
+  background: var(--panel); border-bottom: 1px solid var(--border); flex: none;
+}
+.m-top button.icon { width: 38px; height: 38px; padding: 0; }
+.m-sym { gap: 6px; padding: 6px 8px; font-size: 14px; max-width: 46vw; overflow: hidden; }
+.m-sym b { overflow: hidden; text-overflow: ellipsis; }
+.m-tf { padding: 6px 10px; font-weight: 600; border: 1px solid var(--border); }
+.m-replay { gap: 6px; padding: 6px; flex-wrap: wrap; }
+.m-replay input { flex: 1; min-width: 0; }
+.m-main { flex: 1; min-height: 0; position: relative; }
+.m-chart { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.m-chart.m-hidden { visibility: hidden; pointer-events: none; }
+.m-chart .charts { flex: 1; min-height: 0; }
+.m-ranges { overflow-x: auto; scrollbar-width: none; }
+.m-ranges button { padding: 6px 9px; }
+.m-fab {
+  position: absolute; right: 70px; bottom: 50px; z-index: 6; width: 50px; height: 50px; border-radius: 50%;
+  background: var(--accent); color: #fff; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+.m-fab:hover:not(:disabled) { background: #1e53e5; }
+.m-page { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--panel); overflow: hidden; }
+.m-page .watch { flex: 1; }
+.m-page .side-list { flex: 1; }
+.m-page.m-scroll { overflow-y: auto; display: block; }
+.m-page .bottom.embedded { height: 100%; border-top: 0; }
+.bottom.embedded .tabs { overflow-x: auto; scrollbar-width: none; }
+.bottom.embedded .tabs-info { display: none; }
+.m-nav {
+  display: flex; flex: none; background: var(--panel); border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.m-nav button {
+  flex: 1; flex-direction: column; gap: 2px; padding: 7px 0 6px; border-radius: 0; font-size: 10.5px; color: var(--muted); position: relative;
+}
+.m-nav button.on { color: var(--accent); background: none; }
+.m-dot { position: absolute; top: 6px; left: calc(50% + 8px); width: 7px; height: 7px; border-radius: 50%; background: #f5b800; }
+
+.m-sheet-back { position: fixed; inset: 0; z-index: 55; background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-end; }
+.m-sheet {
+  width: 100%; max-height: 78dvh; overflow-y: auto; background: var(--panel); border-radius: 14px 14px 0 0;
+  padding: 6px 12px calc(16px + env(safe-area-inset-bottom)); animation: m-up 0.18s ease-out;
+}
+@keyframes m-up { from { transform: translateY(40px); opacity: 0.6; } to { transform: none; opacity: 1; } }
+.m-sheet-grip { width: 38px; height: 4px; border-radius: 2px; background: var(--border); margin: 4px auto 8px; }
+.m-sheet-title { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 2px 8px; }
+.m-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 6px; }
+.m-grid button { padding: 10px 4px; border: 1px solid var(--border); border-radius: 8px; }
+.m-grid button.on { border-color: var(--accent); }
+.m-emojis button { font-size: 22px; padding: 6px; }
+.m-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.m-tools button { flex-direction: column; gap: 4px; padding: 10px 2px; border: 1px solid var(--border); border-radius: 8px; white-space: normal; }
+.m-tools button span { font-size: 10.5px; line-height: 1.2; text-align: center; color: var(--muted); }
+.m-tools button.on { border-color: var(--accent); }
+.m-tools button.on span { color: var(--accent); }
+.m-flags { grid-template-columns: repeat(5, 1fr); margin-top: 10px; }
+.m-list { display: flex; flex-direction: column; }
+.m-list label { display: flex; align-items: center; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--border); }
+.m-list label em { margin-left: auto; color: var(--muted); font-style: normal; font-size: 11px; }
+.m-menu button { justify-content: flex-start; gap: 12px; padding: 14px 6px; border-radius: 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+
+/* Éléments de l'ordinateur adaptés au téléphone */
+.m-app .pane-head { right: 60px; font-size: 11px; }
+.m-app .ph-ohlc i { margin-left: 3px; }
+.m-app .quick button { min-width: 0; padding: 1px 6px; }
+.m-app .draw-bar { top: auto; bottom: 52px; right: 50%; transform: translateX(50%); max-width: calc(100vw - 16px); overflow-x: auto; }
+.m-app .draw-bar button.icon { width: 36px; height: 36px; }
+.m-app .pop { position: fixed; top: auto; bottom: 110px; left: 8px; right: 8px; max-height: 50dvh; overflow-y: auto; }
+.m-app .palette { width: auto; }
+.m-app .pal-row { gap: 5px; }
+.m-app .sw { width: 100%; height: 26px; }
+.m-app .modal-back { padding-top: 0; place-items: end center; }
+.m-app .modal { width: 100vw; max-height: 88dvh; border-radius: 14px 14px 0 0; }
+.m-app .modal.small, .m-app .modal.settings { width: 100vw; }
+.m-app .toasts { bottom: 70px; left: 10px; right: 10px; max-width: none; }
+.m-app .w-row { padding: 9px 12px; font-size: 13px; }
+.m-app .a-row { padding: 11px 12px; }
+.m-app .text-editor { font-size: 16px; }

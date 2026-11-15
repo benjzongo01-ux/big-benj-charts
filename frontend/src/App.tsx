@@ -8,7 +8,7 @@ import { googleEmail, initGoogle, signOutGoogle, type FirebaseWebConfig } from '
 import { hasIcon, Icon } from './icons'
 import { initPush } from './push'
 import { DEFAULT_FAVORITES, EMOJIS, FAVORITES_VERSION, findTool, GROUP_ICON, INDICATORS, TOOL_GROUPS, TOOL_ICON } from './overlays'
-import RightPanel, { SIDE_MAX, SIDE_MIN, type SideTab } from './RightPanel'
+import RightPanel, { Alerts, Notices, Orders, Sessions, SIDE_MAX, SIDE_MIN, Watch, type SideTab } from './RightPanel'
 import { TradingSession } from './session'
 import { alerts, history, loadPref, savePref, type Alert, type HistoryEntry, type PaneConfig, type WatchItem } from './stores'
 
@@ -96,6 +96,21 @@ function ToolIcon({ id, size = 18 }: { id: string; size?: number }): JSX.Element
   return name && hasIcon(name) ? <Icon name={name} size={size} /> : <span className="glyph">{findTool(id)?.icon ?? '?'}</span>
 }
 
+/** Téléphone ou petite tablette : l'interface passe en version mobile (navigation en bas, menus qui montent du bas). */
+const MOBILE_QUERY = '(max-width: 820px), (pointer: coarse) and (max-width: 1100px)'
+function useMobile(): boolean {
+  const [mobile, setMobile] = useState(() => window.matchMedia(MOBILE_QUERY).matches)
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY)
+    const on = (): void => setMobile(mq.matches)
+    mq.addEventListener('change', on)
+    return () => mq.removeEventListener('change', on)
+  }, [])
+  return mobile
+}
+
+type MobileTab = 'watch' | 'chart' | 'alerts' | 'trade' | 'more'
+
 /** Heure UTC en direct (une mise à jour par seconde, isolée du reste de l'écran). */
 function UtcClock(): JSX.Element {
   const [now, setNow] = useState(() => new Date())
@@ -182,10 +197,13 @@ export default function App(): JSX.Element {
   const [gotoOpen, setGotoOpen] = useState(false)
   const [gotoDate, setGotoDate] = useState('')
   const [toasts, setToasts] = useState<Toast[]>([])
+  const [mtab, setMtab] = useState<MobileTab>('chart')
+  const [sheet, setSheet] = useState<'tf' | 'ind' | 'draw' | 'more' | null>(null)
   const session = useMemo(() => new TradingSession(), [])
+  const mobile = useMobile()
   const panes = useRef<(PaneHandle | null)[]>([])
   useSyncExternalStore(history.subscribe, history.getVersion)
-  const idx = Math.min(activeIdx, settings.layout - 1)
+  const idx = mobile ? 0 : Math.min(activeIdx, settings.layout - 1)
   const current = settings.panes[idx]
   const pane = useCallback((): PaneHandle | null => panes.current[idx] ?? null, [idx])
 
@@ -426,6 +444,206 @@ export default function App(): JSX.Element {
     setChartMenu(null)
   }
 
+  // Fenêtres communes aux deux versions.
+  const dialogs = (
+    <>
+      {menu === 'symbol' && (
+        <SymbolSearch sources={sources} current={current} watchlist={settings.watchlist} onClose={() => setMenu(null)}
+          onStar={toggleWatch}
+          onPick={(s, source) => {
+            if (replay.active) pane()?.exitReplay()
+            setPane({ source, symbol: s.symbol, precision: s.precision })
+            setMenu(null)
+            setMtab('chart')
+          }} />
+      )}
+      {alertDraft && <AlertDialog draft={alertDraft} onSave={saveAlert} onClose={() => setAlertDraft(null)} />}
+      <div className="toasts">
+        {toasts.map((t) => <div key={t.id} className={`toast ${t.kind}`}>{t.text}</div>)}
+      </div>
+    </>
+  )
+  const editAlert = (a: Alert): void => setAlertDraft({ id: a.id, source: a.source, symbol: a.symbol, precision: a.precision, price: a.price, condition: a.condition, message: a.message, once: a.once })
+
+  // ================================================================ version téléphone
+  if (mobile) {
+    const drawMobile = (tool: string, data?: unknown): void => {
+      setSheet(null)
+      setMtab('chart')
+      draw(tool, data)
+    }
+    const NAV: [MobileTab, string, string][] = [
+      ['watch', 'list', 'Liste'], ['chart', 'candles', 'Graphique'], ['alerts', 'alarm', 'Alertes'], ['trade', 'orders', 'Trading'], ['more', 'more', 'Plus'],
+    ]
+    return (
+      <div className="m-app" onClick={closeMenus}>
+        <header className="m-top" onClick={(e) => e.stopPropagation()}>
+          <button className="m-sym" onClick={() => { closeMenus(); setMenu('symbol') }}><Icon name="search" size={16} /><b>{current.symbol}</b></button>
+          <button className="m-tf" onClick={() => setSheet('tf')}>{TF_LABEL[current.tf]}</button>
+          <button className="icon" onClick={() => setSheet('ind')} title="Indicateurs"><Icon name="fx" /></button>
+          <button className="icon" onClick={() => openAlert()} title="Créer une alerte"><Icon name="alarm" /></button>
+          <div className="spacer" />
+          <button className="icon" onClick={undo} disabled={!history.canUndo} title="Annuler"><Icon name="undo" /></button>
+          <button className="icon" onClick={() => setSheet('more')} title="Plus d’options"><Icon name="more" /></button>
+        </header>
+
+        {(replay.active || replay.picking || replayOpen) && (
+          <div className="replay-bar m-replay">
+            {replay.active ? (
+              <>
+                <button className="primary" onClick={() => pane()?.play(!replay.playing)}>{replay.playing ? 'Pause' : 'Lecture'}</button>
+                <button onClick={() => pane()?.step()}>+1 bougie</button>
+                <select value={replay.speed} onChange={(e) => pane()?.setSpeed(Number(e.target.value))}>
+                  {SPEEDS.map((s) => <option key={s} value={s}>{s}/s</option>)}
+                </select>
+                <span className="replay-time">{fmtDate(replay.time)}</span>
+                <button className="icon" onClick={() => { pane()?.exitReplay(); setReplayOpen(false) }} title="Quitter le replay"><Icon name="close" size={14} /></button>
+              </>
+            ) : (
+              <>
+                <input type="datetime-local" value={replayDate} onChange={(e) => setReplayDate(e.target.value)} />
+                <button className="primary" onClick={startReplay}>Démarrer</button>
+                <button className="icon" onClick={() => setReplayOpen(false)} title="Fermer"><Icon name="close" size={14} /></button>
+              </>
+            )}
+          </div>
+        )}
+
+        <main className="m-main">
+          {/* Le graphique reste chargé quand on change d'onglet : il réapparaît instantanément. */}
+          <div className={`m-chart${mtab === 'chart' ? '' : ' m-hidden'}`}>
+            <div className="charts layout-1">
+              <ChartPane ref={(h) => { panes.current[0] = h }} config={settings.panes[0]} initialIndicators={settings.indicators} theme={settings.theme}
+                chartType={settings.chartType} active session={session} onActivate={() => undefined}
+                onReplay={(s) => setReplay(s)} onMessage={message}
+                onDrawings={(source, symbol, before, after) => history.push({ kind: 'drawings', source, symbol, before, after })}
+                onContext={(at) => openAlert(at.price)} onAlert={(price) => openAlert(price)} />
+            </div>
+            <div className="range-bar m-ranges">
+              {RANGES.map(([label, ms, tf]) => <button key={label} disabled={replay.active} onClick={() => setRange(ms(), tf)}>{label}</button>)}
+            </div>
+            <button className="m-fab" onClick={() => setSheet('draw')} title="Outils de dessin"><Icon name="pencil" size={22} /></button>
+          </div>
+          {mtab === 'watch' && (
+            <div className="m-page">
+              <Watch items={settings.watchlist} current={current} onAdd={() => setMenu('symbol')} onNewAlert={() => openAlert()}
+                onRemove={(w) => toggleWatch(w, w.source)}
+                onPick={(w) => { if (!replay.active) setPane({ source: w.source, symbol: w.symbol, precision: w.precision }); setMtab('chart') }} />
+            </div>
+          )}
+          {mtab === 'alerts' && <div className="m-page"><Alerts onNewAlert={() => openAlert()} onEditAlert={editAlert} /></div>}
+          {mtab === 'trade' && (
+            <div className="m-page">
+              <BottomPanel embedded config={current} session={session} replay={replay} goTo={(ts) => { setMtab('chart'); pane()?.goTo(ts) }} onMessage={message} />
+            </div>
+          )}
+          {mtab === 'more' && (
+            <div className="m-page m-scroll">
+              <Notices />
+              <Orders session={session} />
+              <Sessions />
+            </div>
+          )}
+        </main>
+
+        <nav className="m-nav">
+          {NAV.map(([id, icon, label]) => (
+            <button key={id} className={mtab === id ? 'on' : ''} onClick={() => setMtab(id)}>
+              <Icon name={icon} size={20} /><span>{label}</span>
+              {id === 'alerts' && alerts.alerts.some((a) => a.active) && <i className="m-dot" />}
+            </button>
+          ))}
+        </nav>
+
+        {/* ------------------------------------------------ menus qui montent du bas */}
+        {sheet && (
+          <div className="m-sheet-back" onClick={() => setSheet(null)}>
+            <div className="m-sheet" onClick={(e) => e.stopPropagation()}>
+              <div className="m-sheet-grip" />
+              {sheet === 'tf' && (
+                <>
+                  <div className="m-sheet-title">Unité de temps</div>
+                  <div className="m-grid">
+                    {TIMEFRAMES.map((tf) => (
+                      <button key={tf} className={tf === current.tf ? 'on' : ''} onClick={() => { setPane({ tf }); setSheet(null) }}>{TF_LABEL[tf]}</button>
+                    ))}
+                  </div>
+                  <div className="m-sheet-title">Type de graphique</div>
+                  <div className="m-grid">
+                    {CHART_TYPES.map(([id, label]) => (
+                      <button key={id} className={settings.chartType === id ? 'on' : ''} onClick={() => { update({ chartType: id }); setSheet(null) }}>{label}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+              {sheet === 'ind' && (
+                <>
+                  <div className="m-sheet-title">Indicateurs</div>
+                  <div className="m-list">
+                    {INDICATORS.map((i) => (
+                      <label key={i.id}>
+                        <input type="checkbox" checked={indicators.includes(i.id)}
+                          onChange={() => { const list = pane()?.toggleIndicator(i.id) ?? []; setIndicators(list); update({ indicators: list }) }} />
+                        {i.label}<em>{i.main ? 'prix' : 'fenêtre'}</em>
+                      </label>
+                    ))}
+                  </div>
+                </>
+              )}
+              {sheet === 'draw' && (
+                <>
+                  <div className="m-sheet-title">Favoris</div>
+                  <div className="m-tools">
+                    {layout.favorites.map((id) => (
+                      <button key={id} onClick={() => drawMobile(id)}><ToolIcon id={id} size={20} /><span>{findTool(id)?.label.split(' (')[0] ?? id}</span></button>
+                    ))}
+                  </div>
+                  <div className="m-tools m-flags">
+                    <button className={flags.magnet ? 'on' : ''} onClick={() => toggleFlag('magnet')}><Icon name="magnet" size={20} /><span>Aimant</span></button>
+                    <button className={flags.keep ? 'on' : ''} onClick={() => toggleFlag('keep')}><Icon name="keep" size={20} /><span>Continuer</span></button>
+                    <button className={flags.lock ? 'on' : ''} onClick={() => toggleFlag('lock')}><Icon name="lock" size={20} /><span>Verrouiller</span></button>
+                    <button className={!flags.visible ? 'on' : ''} onClick={() => toggleFlag('visible')}><Icon name={flags.visible ? 'eye' : 'eyeOff'} size={20} /><span>Masquer</span></button>
+                    <button onClick={() => { pane()?.clearDrawings(); setSheet(null) }}><Icon name="trash" size={20} /><span>Tout effacer</span></button>
+                  </div>
+                  {TOOL_GROUPS.map((g) => (
+                    <div key={g.label}>
+                      <div className="m-sheet-title">{g.label}</div>
+                      <div className="m-tools">
+                        {g.tools.map((t) => (
+                          <button key={t.id} onClick={() => drawMobile(t.id)}><ToolIcon id={t.id} size={20} /><span>{t.label.split(' (')[0]}</span></button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="m-sheet-title">Emoji</div>
+                  <div className="m-grid m-emojis">{EMOJIS.map((e) => <button key={e} onClick={() => drawMobile('emoji', e)}>{e}</button>)}</div>
+                </>
+              )}
+              {sheet === 'more' && (
+                <div className="m-list m-menu">
+                  <button onClick={() => { setSheet(null); setReplayOpen(true); setMtab('chart') }}><Icon name="rewind" />Replay</button>
+                  <button onClick={() => { redo(); setSheet(null) }} disabled={!history.canRedo}><Icon name="redo" />Rétablir</button>
+                  <button onClick={() => { pane()?.screenshot(); setSheet(null) }}><Icon name="camera" />Capture du graphique</button>
+                  <button onClick={() => { update({ theme: settings.theme === 'dark' ? 'light' : 'dark' }); setSheet(null) }}>
+                    <Icon name={settings.theme === 'dark' ? 'sun' : 'moon'} />Thème {settings.theme === 'dark' ? 'clair' : 'sombre'}
+                  </button>
+                  <button onClick={() => { setSheet(null); setMtab('alerts') }}><Icon name="bell" />Notifications et sonnerie</button>
+                  {getToken() && (
+                    <button onClick={() => void (google ? signOutGoogle() : Promise.resolve(setToken(''))).then(() => location.reload())}>
+                      <Icon name="logout" />Se déconnecter{google && googleEmail() ? ` (${googleEmail()})` : ''}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+        {dialogs}
+      </div>
+    )
+  }
+
+  // ================================================================ version ordinateur
   return (
     <div className="app" onClick={closeMenus}>
       {/* ------------------------------------------------ barre du haut */}
@@ -615,7 +833,7 @@ export default function App(): JSX.Element {
           onPick={(w) => !replay.active && setPane({ source: w.source, symbol: w.symbol, precision: w.precision })}
           onRemove={(w) => toggleWatch(w, w.source)} onAdd={() => { closeMenus(); setMenu('symbol') }}
           onNewAlert={() => openAlert()}
-          onEditAlert={(a: Alert) => setAlertDraft({ id: a.id, source: a.source, symbol: a.symbol, precision: a.precision, price: a.price, condition: a.condition, message: a.message, once: a.once })} />
+          onEditAlert={editAlert} />
       </div>
 
       {/* ------------------------------------------------ menus flottants et fenêtres */}
@@ -651,20 +869,7 @@ export default function App(): JSX.Element {
         </div>
       )}
 
-      {menu === 'symbol' && (
-        <SymbolSearch sources={sources} current={current} watchlist={settings.watchlist} onClose={() => setMenu(null)}
-          onStar={toggleWatch}
-          onPick={(s, source) => {
-            if (replay.active) pane()?.exitReplay()
-            setPane({ source, symbol: s.symbol, precision: s.precision })
-            setMenu(null)
-          }} />
-      )}
-      {alertDraft && <AlertDialog draft={alertDraft} onSave={saveAlert} onClose={() => setAlertDraft(null)} />}
-
-      <div className="toasts">
-        {toasts.map((t) => <div key={t.id} className={`toast ${t.kind}`}>{t.text}</div>)}
-      </div>
+      {dialogs}
     </div>
   )
 }

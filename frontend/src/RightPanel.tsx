@@ -34,7 +34,7 @@ export const SIDE_MAX = 520
 const sign = (n: number): string => (n >= 0 ? '+' : '')
 
 // ---------------------------------------------------------------- liste de surveillance + fiche du symbole
-function Watch({ items, current, onPick, onRemove, onAdd, onNewAlert }: Pick<Props, 'items' | 'current' | 'onPick' | 'onRemove' | 'onAdd' | 'onNewAlert'>): JSX.Element {
+export function Watch({ items, current, onPick, onRemove, onAdd, onNewAlert }: Pick<Props, 'items' | 'current' | 'onPick' | 'onRemove' | 'onAdd' | 'onNewAlert'>): JSX.Element {
   useSyncExternalStore(quotes.subscribe, quotes.getVersion)
   const key = items.map((w) => keyOf(w.source, w.symbol)).join(',')
   useEffect(() => {
@@ -135,7 +135,7 @@ function DeviceBlock(): JSX.Element | null {
 }
 
 // ---------------------------------------------------------------- alertes
-function Alerts({ onNewAlert, onEditAlert }: Pick<Props, 'onNewAlert' | 'onEditAlert'>): JSX.Element {
+export function Alerts({ onNewAlert, onEditAlert }: Pick<Props, 'onNewAlert' | 'onEditAlert'>): JSX.Element {
   useSyncExternalStore(alerts.subscribe, alerts.getVersion)
   return (
     <>
@@ -170,7 +170,7 @@ function Alerts({ onNewAlert, onEditAlert }: Pick<Props, 'onNewAlert' | 'onEditA
 }
 
 // ---------------------------------------------------------------- ordres et positions (simulation)
-function Orders({ session }: { session: TradingSession }): JSX.Element {
+export function Orders({ session }: { session: TradingSession }): JSX.Element {
   useSyncExternalStore(session.subscribe, session.getVersion)
   return (
     <>
@@ -218,7 +218,7 @@ const MARKETS: [string, string, string, number, number, boolean][] = [
 ]
 const hm = (m: number): string => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`
 
-function Sessions(): JSX.Element {
+export function Sessions(): JSX.Element {
   const [, tick] = useState(0)
   useEffect(() => {
     const t = window.setInterval(() => tick((n) => n + 1), 30_000)
@@ -251,7 +251,7 @@ function Sessions(): JSX.Element {
 }
 
 // ---------------------------------------------------------------- notifications
-function Notices(): JSX.Element {
+export function Notices(): JSX.Element {
   useSyncExternalStore(alerts.subscribe, alerts.getVersion)
   useEffect(() => { alerts.markRead() })
   return (

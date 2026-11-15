@@ -10,6 +10,8 @@ interface Props {
   replay: ReplayState
   goTo: (ts: number) => void
   onMessage: (text: string, kind?: 'error' | 'info') => void
+  /** Version téléphone : panneau toujours ouvert, en pleine page. */
+  embedded?: boolean
 }
 
 interface Builtin { id: string; label: string; params: Record<string, number> }
@@ -93,9 +95,10 @@ function EquityCurve({ points }: { points: [number, number][] }): JSX.Element {
   return <canvas ref={ref} className="equity" />
 }
 
-export default function BottomPanel({ config, session, replay, goTo, onMessage }: Props): JSX.Element {
-  const [tab, setTab] = useState(0)
-  const [open, setOpen] = useState(() => loadPanel().open)
+export default function BottomPanel({ config, session, replay, goTo, onMessage, embedded }: Props): JSX.Element {
+  const [tab, setTab] = useState(embedded ? 1 : 0)
+  const [opened, setOpen] = useState(() => loadPanel().open)
+  const open = embedded || opened
   const [height, setHeight] = useState(() => loadPanel().height)
   const [full, setFull] = useState(false)
   const drag = useRef<{ y: number; h: number; raf: number; next: number } | null>(null)
@@ -185,8 +188,8 @@ export default function BottomPanel({ config, session, replay, goTo, onMessage }
   useEffect(loadStrategies, [])
 
   return (
-    <section className={`bottom${open ? '' : ' closed'}${open && full ? ' full' : ''}`} style={open && !full ? { height } : undefined}>
-      {open && !full && (
+    <section className={`bottom${open ? '' : ' closed'}${open && full ? ' full' : ''}${embedded ? ' embedded' : ''}`} style={open && !full && !embedded ? { height } : undefined}>
+      {open && !full && !embedded && (
         <div className="panel-grip" title="Glisser pour redimensionner" onPointerDown={onGripDown} onPointerMove={onGripMove}
           onPointerUp={onGripUp} onPointerCancel={onGripUp} onDoubleClick={() => setHeight(300)} />
       )}
@@ -196,14 +199,16 @@ export default function BottomPanel({ config, session, replay, goTo, onMessage }
             title={open && i === tab ? 'Replier le panneau' : `Ouvrir ${t}`}>{t}</button>
         ))}
         <span className="tabs-info">{config.symbol} · {config.tf}{replay.active ? ' · replay' : ''}</span>
-        {open && (
+        {open && !embedded && (
           <button className="icon" onClick={() => setFull(!full)} title={full ? 'Réduire le panneau (Échap)' : 'Agrandir le panneau en plein écran'}>
             {full ? '⤡' : '⤢'}
           </button>
         )}
-        <button className="icon" onClick={() => { setOpen(!open); setFull(false) }} title={open ? 'Replier le panneau (Alt+B)' : 'Ouvrir le panneau (Alt+B)'}>
-          {open ? '▼' : '▲'}
-        </button>
+        {!embedded && (
+          <button className="icon" onClick={() => { setOpen(!open); setFull(false) }} title={open ? 'Replier le panneau (Alt+B)' : 'Ouvrir le panneau (Alt+B)'}>
+            {open ? '▼' : '▲'}
+          </button>
+        )}
       </div>
       <div className="bottom-body" hidden={!open}>
         <div hidden={tab !== 0} className="fill"><Backtest config={config} strategies={strategies} code={code} goTo={goTo} onMessage={onMessage} /></div>
