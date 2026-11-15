@@ -203,6 +203,7 @@ export default function App(): JSX.Element {
   const mobile = useMobile()
   const panes = useRef<(PaneHandle | null)[]>([])
   useSyncExternalStore(history.subscribe, history.getVersion)
+  useSyncExternalStore(alerts.subscribe, alerts.getVersion)
   const idx = mobile ? 0 : Math.min(activeIdx, settings.layout - 1)
   const current = settings.panes[idx]
   const pane = useCallback((): PaneHandle | null => panes.current[idx] ?? null, [idx])
@@ -455,6 +456,16 @@ export default function App(): JSX.Element {
   // Fenêtres communes aux deux versions.
   const dialogs = (
     <>
+      {alerts.ringing.length > 0 && (
+        <div className="ring-back">
+          <div className="ring-box" role="alertdialog" aria-label="Alerte de prix atteinte">
+            <div className="ring-bell"><Icon name="alarm" size={34} /></div>
+            <b>{alerts.ringing.length > 1 ? `${alerts.ringing.length} alertes atteintes` : 'Alerte atteinte'}</b>
+            {alerts.ringing.map((r) => <div key={r.id} className="ring-text">{r.text}</div>)}
+            <button className="primary ring-stop" autoFocus onClick={() => alerts.stopRinging()}>Arrêter</button>
+          </div>
+        </div>
+      )}
       {cm && (
         <div className="ctx" style={{ left: Math.min(cm.x, window.innerWidth - 380), top: Math.min(cm.y, window.innerHeight - 220) }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => quickAlert(cm.price)}><Icon name="alarm" size={15} />Ajouter une alerte sur {current.symbol} à {p$}<em>Alt+A</em></button>

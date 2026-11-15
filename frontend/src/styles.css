@@ -479,3 +479,28 @@ button svg { flex: none; }
 .m-app .price-plus { width: 28px; height: 28px; margin: -14px 0 0 -14px; }
 .m-app .ctx { left: 8px !important; right: 8px; top: auto !important; bottom: 70px; min-width: 0; }
 .m-app .ctx button { padding: 12px 10px; font-size: 13.5px; white-space: normal; }
+
+/* ---------- barre de l'alerte cliquée sur le graphique */
+.alert-bar {
+  position: absolute; right: 84px; top: 96px; z-index: 8; display: flex; align-items: center; gap: 4px; padding: 4px 6px;
+  background: var(--panel); border: 1px solid #f5b800; border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45); font-size: 12px;
+}
+.alert-bar > svg { color: #f5b800; }
+.alert-bar input { width: 96px; font-variant-numeric: tabular-nums; }
+.alert-bar select { padding: 3px 4px; }
+.alert-bar button.icon { width: 30px; height: 28px; padding: 0; }
+.alert-bar .danger:hover:not(:disabled) { color: var(--down); background: rgba(239, 83, 80, 0.15); }
+.m-app .alert-bar { top: auto; bottom: 52px; right: 8px; left: 8px; flex-wrap: wrap; }
+.m-app .alert-bar input { flex: 1; min-width: 90px; font-size: 16px; }
+
+/* ---------- alerte atteinte : sonne jusqu'à « Arrêter » */
+.ring-back { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, 0.6); display: grid; place-items: center; padding: 16px; }
+.ring-box {
+  width: min(380px, 100%); background: var(--panel); border: 2px solid #f5b800; border-radius: 14px; padding: 22px 18px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+.ring-box b { font-size: 17px; }
+.ring-bell { color: #f5b800; animation: ring-shake 0.5s ease-in-out infinite; }
+@keyframes ring-shake { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-16deg); } 75% { transform: rotate(16deg); } }
+.ring-text { font-size: 14px; }
+.ring-stop { width: 100%; padding: 12px; font-size: 16px; margin-top: 6px; }

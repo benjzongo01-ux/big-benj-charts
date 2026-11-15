@@ -145,6 +145,28 @@ export interface Notice {
 
 const SEEN_KEY = 'bbc_alerts_seen'
 
+/** Sonnerie en boucle (deux bips toutes les 1,4 s) jusqu'à l'appui sur « Arrêter ». */
+let ringTimer = 0
+function startRinging(): void {
+  if (ringTimer) return
+  beep()
+  ringTimer = window.setInterval(beep, 1400)
+  try {
+    navigator.vibrate?.([600, 300, 600, 300, 900])
+  } catch {
+    /* vibration indisponible */
+  }
+}
+function stopRingingSound(): void {
+  window.clearInterval(ringTimer)
+  ringTimer = 0
+  try {
+    navigator.vibrate?.(0)
+  } catch {
+    /* vibration indisponible */
+  }
+}
+
 function beep(): void {
   try {
     const ctx = new AudioContext()
@@ -168,6 +190,8 @@ function beep(): void {
 class AlertStore extends Store {
   alerts: Alert[] = []
   notices: Notice[] = []
+  /** Alertes atteintes qui sonnent encore (affichées jusqu'à l'appui sur « Arrêter »). */
+  ringing: { id: string; text: string }[] = []
   unread = 0
   loaded = false
   /** Appelé à chaque modification faite par l'utilisateur (pour annuler / rétablir). */
@@ -186,6 +210,7 @@ class AlertStore extends Store {
       this.alerts = []
     }
     this.loaded = true
+    this.cleanup()
     this.emit()
     void this.catchUp()
     window.setInterval(() => savePref(SEEN_KEY, { t: Date.now() }), 30_000)
@@ -209,6 +234,24 @@ class AlertStore extends Store {
     if (JSON.stringify(list) === JSON.stringify(this.alerts)) return
     this.alerts = list
     this.emit()
+    this.cleanup()
+  }
+
+  /** Alertes « une seule fois » déjà atteintes (par exemple sonnées sur le téléphone) : elles disparaissent. */
+  private cleanup(): void {
+    const ringingIds = new Set(this.ringing.map((r) => r.id))
+    const done = this.alerts.filter((a) => a.once && !a.active && a.triggeredAt && !ringingIds.has(a.id))
+    if (done.length) this.commit(this.alerts.filter((a) => !done.includes(a)), false)
+  }
+
+  /** « Arrêter » : coupe la sonnerie et retire du graphique les alertes atteintes (celles « à chaque fois » restent). */
+  stopRinging(): void {
+    stopRingingSound()
+    const ids = new Set(this.ringing.map((r) => r.id))
+    this.ringing = []
+    const next = this.alerts.filter((a) => !(ids.has(a.id) && a.once))
+    if (next.length !== this.alerts.length) this.commit(next, false)
+    else this.emit()
   }
 
   /** Envoie une opération (une alerte à la fois) ; la réponse du serveur fait foi. */
@@ -282,13 +325,14 @@ class AlertStore extends Store {
         + (late ? ' (pendant ton absence)' : ` · prix ${fmt(price, a.precision)}`) + (a.message ? ` · ${a.message}` : '')
       this.notify(`Alerte : ${text}`, 'alert')
       this.onTrigger?.(`🔔 ${text}`)
+      if (!this.ringing.some((r) => r.id === a.id)) this.ringing.push({ id: a.id, text })
       try {
-        if ('Notification' in window && Notification.permission === 'granted') new Notification('Big Benj Charts', { body: text, tag: a.id })
+        if ('Notification' in window && Notification.permission === 'granted') new Notification('Big Benj Charts', { body: text, tag: a.id, requireInteraction: true })
       } catch {
         /* notifications refusées ou indisponibles */
       }
     })
-    beep()
+    startRinging()
     // Une alerte « une seule fois » se désactive ; les autres restent armées.
     this.commit(this.alerts.map((a) => (ids.has(a.id) ? { ...a, triggeredAt: Date.now(), active: a.once ? false : a.active } : a)), false)
   }
@@ -299,7 +343,9 @@ class AlertStore extends Store {
     this.recent.set(tag, Date.now())
     this.notify(`Alerte : ${body}`, 'alert')
     this.onTrigger?.(`🔔 ${body}`)
-    beep()
+    if (!this.ringing.some((r) => r.id === tag)) this.ringing.push({ id: tag, text: body })
+    startRinging()
+    this.emit()
     void this.sync()
   }
 

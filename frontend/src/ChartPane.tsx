@@ -157,6 +157,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
   const cb = useRef({ onReplay, onMessage, onActivate, onDrawings, onContext, onAlert, onEditAlert, session, active })
   cb.current = { onReplay, onMessage, onActivate, onDrawings, onContext, onAlert, onEditAlert, session, active }
   const [plus, setPlus] = useState<{ x: number; y: number } | null>(null) // bouton « + » de l'échelle de prix
+  const [selAlert, setSelAlert] = useState<string | null>(null)            // alerte cliquée sur le graphique
   const plusRaf = useRef(0)
   const drawings = useRef(new Map<string, string>())      // id -> nom de l'outil
   const indicatorPanes = useRef(new Map<string, string>()) // indicateur -> id de fenêtre
@@ -268,11 +269,30 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     return data
   }
 
+  /** Enregistre tout de suite les dessins affichés pour la paire indiquée. */
+  const saveNow = (source: string, symbol: string): void => {
+    if (!chart.current) return
+    const data = collect()
+    const after = JSON.stringify(data)
+    if (after !== snapshot.current) {
+      if (!restoring.current) cb.current.onDrawings(source, symbol, JSON.parse(snapshot.current) as SavedDrawing[], data)
+      snapshot.current = after
+    }
+    restoring.current = false
+    void api(`/api/drawings?source=${encodeURIComponent(source)}&symbol=${encodeURIComponent(symbol)}`, 'PUT', data).catch(() => undefined)
+  }
+  const pendingSave = useRef<{ source: string; symbol: string } | null>(null)
+  const wiping = useRef(false)
+
   const scheduleSave = (): void => {
+    if (wiping.current) return // effacement de l'affichage au changement de paire : rien à enregistrer
     window.clearTimeout(saveTimer.current)
     const { source, symbol } = cfg.current
+    pendingSave.current = { source, symbol }
     saveTimer.current = window.setTimeout(() => {
-      if (!chart.current) return
+      pendingSave.current = null
+      // Sécurité : on n'enregistre jamais les dessins d'une paire sous le nom d'une autre.
+      if (!chart.current || cfg.current.source !== source || cfg.current.symbol !== symbol) return
       const data = collect()
       const after = JSON.stringify(data)
       if (after !== snapshot.current) {
@@ -489,7 +509,12 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     drawingId.current = null
     setSel(null)
     setEditor(null)
-    ids.forEach((id) => c?.removeOverlay(id))
+    wiping.current = true
+    try {
+      ids.forEach((id) => c?.removeOverlay(id))
+    } finally {
+      wiping.current = false
+    }
   }
 
   // Masquage par unité de temps : appliqué à chaque changement d'unité.
@@ -547,7 +572,10 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
 
   // ---------------------------------------------------------------- lignes d'alertes
   useEffect(() => {
-    let key = ''
+    // Nouvelle paire : les lignes de l'ancienne disparaissent tout de suite (ses alertes restent actives en arrière-plan).
+    chart.current?.removeOverlay({ groupId: 'alert' })
+    setSelAlert(null)
+    let key: string | null = null
     const onChange = (): void => {
       const c = chart.current
       if (!c) return
@@ -574,9 +602,12 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
           onMouseEnter: (e: OverlayEvent) => { c.overrideOverlay({ id: e.overlay.id, extendData: { ...data, hover: true } }); return false },
           onMouseLeave: (e: OverlayEvent) => { c.overrideOverlay({ id: e.overlay.id, extendData: { ...data, hover: false } }); return false },
           // Corbeille : supprime l'alerte ; ailleurs sur la ligne : ouvre la modification (prix à taper).
+          // Clic sur la ligne : barre de l'alerte (prix à taper, pause, supprimer) ; corbeille : suppression directe.
           onClick: (e: OverlayEvent) => {
-            if (e.figureKey === 'delete') alerts.remove(a.id)
-            else if (e.figureKey === 'label') cb.current.onEditAlert(a.id)
+            if (e.figureKey === 'delete') {
+              alerts.remove(a.id)
+              setSelAlert(null)
+            } else setSelAlert(a.id)
             return false
           },
           onDoubleClick: () => { cb.current.onEditAlert(a.id); return false },
@@ -674,6 +705,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     let dead = false
     wipeDrawings()
     window.clearTimeout(saveTimer.current)
+    pendingSave.current = null
     snapshot.current = '[]'
     void api<SavedDrawing[]>(`/api/drawings?source=${encodeURIComponent(config.source)}&symbol=${encodeURIComponent(config.symbol)}`)
       .then((list) => {
@@ -682,9 +714,15 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
         snapshot.current = JSON.stringify(collect())
       })
       .catch(() => undefined)
+    const leaving = { source: config.source, symbol: config.symbol }
     return () => {
       dead = true
       window.clearTimeout(saveTimer.current)
+      // Une modification faite juste avant de changer de paire est enregistrée sur SA paire, pas perdue.
+      if (pendingSave.current && pendingSave.current.source === leaving.source && pendingSave.current.symbol === leaving.symbol) {
+        pendingSave.current = null
+        saveNow(leaving.source, leaving.symbol)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.source, config.symbol])
@@ -855,6 +893,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
 
   const onPick = (e: React.MouseEvent): void => {
     onActivate()
+    if (selAlert && !(e.target as HTMLElement).closest('.alert-bar')) setSelAlert(null)
     const r = replay.current
     if (!r.picking || e.button !== 0) return
     const { x, y } = relative(e)
@@ -1072,6 +1111,35 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
           }}
           onBlur={() => closeEditor(true)} />
       )}
+      {selAlert && (() => {
+        const a = alerts.alerts.find((x) => x.id === selAlert)
+        if (!a || a.symbol !== config.symbol || a.source !== config.source) return null
+        return (
+          <div className="alert-bar" onMouseDown={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
+            <Icon name="alarm" size={15} />
+            <b>{a.symbol}</b>
+            <select value={a.condition} onChange={(e) => alerts.update(a.id, { condition: e.target.value as typeof a.condition })} title="Condition">
+              <option value="cross">Croisement</option><option value="above">Au-dessus de</option><option value="below">En dessous de</option>
+            </select>
+            <input key={`${a.id}:${a.price}`} defaultValue={a.price.toFixed(config.precision)} inputMode="decimal" title="Prix de l'alerte (Entrée pour valider)"
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return
+                const v = Number((e.target as HTMLInputElement).value.replace(',', '.'))
+                if (v > 0) alerts.update(a.id, { price: v, active: true })
+              }}
+              onBlur={(e) => {
+                const v = Number(e.target.value.replace(',', '.'))
+                if (v > 0 && v !== a.price) alerts.update(a.id, { price: v, active: true })
+              }} />
+            <button className="icon" title={a.active ? 'Mettre en pause' : 'Réactiver'} onClick={() => alerts.update(a.id, { active: !a.active })}>
+              <Icon name={a.active ? 'pause' : 'play'} size={15} />
+            </button>
+            <button className="icon" title="Plus de réglages (message, une fois / à chaque fois)" onClick={() => cb.current.onEditAlert(a.id)}><Icon name="gear" size={15} /></button>
+            <button className="icon danger" title="Supprimer l'alerte" onClick={() => { alerts.remove(a.id); setSelAlert(null) }}><Icon name="trash" size={15} /></button>
+            <button className="icon" title="Fermer (l'alerte reste active)" onClick={() => setSelAlert(null)}><Icon name="close" size={14} /></button>
+          </div>
+        )
+      })()}
       {plus && !replay.current.picking && (
         <button className="price-plus" style={{ left: plus.x, top: plus.y }} title="Alerte, ordre ou ligne à ce prix"
           onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onClick={openPlus}><Icon name="plus" size={13} /></button>
