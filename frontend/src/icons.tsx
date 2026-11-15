@@ -1,6 +1,14 @@
 // Icônes de l'interface : tracés SVG fins, nets à toutes les tailles et dans les deux thèmes.
 const P: Record<string, JSX.Element> = {
   cross: <path d="M12 3v18M3 12h18" />,
+  path: <><path d="M4 17l5-8 4 5 7-8" /><path d="M16 6h4v4" /></>,
+  long: <><path d="M4 4h16M4 20h16M4 12h16" /><path d="M10 8.5v7h4" /></>,
+  short: <><path d="M4 4h16M4 20h16M4 12h16" /><path d="M14.5 9c-.6-.7-1.5-1-2.5-1-1.4 0-2.5.8-2.5 1.9 0 2.4 5 1.4 5 3.9 0 1.1-1.1 2.2-2.6 2.2-1 0-2-.4-2.6-1.1" /></>,
+  gear: <><circle cx="12" cy="12" r="3" /><path d="M12 2l2 3 3.5-1 .5 3.5 3 2-2 3 2 3-3 2-.5 3.5-3.5-1-2 3-2-3-3.5 1-.5-3.5-3-2 2-3-2-3 3-2L6.5 4 10 5z" /></>,
+  unlock: <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 017.5-2" /></>,
+  more: <path d="M5 12h.01M12 12h.01M19 12h.01" strokeWidth="3" />,
+  pencil: <path d="M4 20h4L19 9l-4-4L4 16zM14 6l4 4" />,
+  keep: <><path d="M5 19L19 5" /><path d="M14 5h5v5" /><path d="M4 13a8 8 0 007 7" /></>,
   line: <><path d="M5.5 18.5l13-13" /><circle cx="4" cy="20" r="2" /><circle cx="20" cy="4" r="2" /></>,
   ray: <><path d="M5.5 18.5L21 3" /><circle cx="4" cy="20" r="2" /></>,
   hline: <><path d="M3 12h7M14 12h7" /><circle cx="12" cy="12" r="2" /></>,

@@ -7,7 +7,7 @@ import { AlertDialog, Login, SymbolSearch, type AlertDraft } from './Dialogs'
 import { googleEmail, initGoogle, signOutGoogle, type FirebaseWebConfig } from './google'
 import { hasIcon, Icon } from './icons'
 import { initPush } from './push'
-import { DEFAULT_FAVORITES, EMOJIS, findTool, GROUP_ICON, INDICATORS, TOOL_GROUPS, TOOL_ICON } from './overlays'
+import { DEFAULT_FAVORITES, EMOJIS, FAVORITES_VERSION, findTool, GROUP_ICON, INDICATORS, TOOL_GROUPS, TOOL_ICON } from './overlays'
 import RightPanel, { SIDE_MAX, SIDE_MIN, type SideTab } from './RightPanel'
 import { TradingSession } from './session'
 import { alerts, history, loadPref, savePref, type Alert, type HistoryEntry, type PaneConfig, type WatchItem } from './stores'
@@ -27,6 +27,7 @@ interface Layout {
   sideWidth: number
   favorites: string[]
   favPos: { x: number; y: number }
+  favVersion?: number
 }
 interface Toast { id: number; text: string; kind: 'error' | 'info' }
 interface ChartMenu { x: number; y: number; price: number }
@@ -158,7 +159,11 @@ export default function App(): JSX.Element {
   const [settings, setSettings] = useState<Settings>(loadSettings)
   const [layout, setLayout] = useState<Layout>(() => {
     const l = loadPref('bbc_layout', DEFAULT_LAYOUT)
-    if (!Array.isArray(l.favorites)) l.favorites = DEFAULT_FAVORITES
+    // Les favoris reprennent ceux de TradingView (une fois, puis l'utilisateur les modifie à sa guise).
+    if (!Array.isArray(l.favorites) || l.favVersion !== FAVORITES_VERSION) {
+      l.favorites = DEFAULT_FAVORITES
+      l.favVersion = FAVORITES_VERSION
+    }
     if (window.innerWidth < 1000) l.side = null
     return l
   })
@@ -170,7 +175,7 @@ export default function App(): JSX.Element {
   const [chartMenu, setChartMenu] = useState<ChartMenu | null>(null)
   const [alertDraft, setAlertDraft] = useState<AlertDraft | null>(null)
   const [indicators, setIndicators] = useState<string[]>(settings.indicators)
-  const [flags, setFlags] = useState({ magnet: false, lock: false, visible: true })
+  const [flags, setFlags] = useState({ magnet: false, lock: false, visible: true, keep: false })
   const [replay, setReplay] = useState<ReplayState>({ active: false, playing: false, time: 0, left: 0, speed: 4, picking: false })
   const [replayOpen, setReplayOpen] = useState(false)
   const [replayDate, setReplayDate] = useState('')
@@ -277,7 +282,7 @@ export default function App(): JSX.Element {
     pane()?.draw(tool, data)
   }, [pane, closeMenus])
 
-  const toggleFlag = (name: 'magnet' | 'lock' | 'visible'): void => {
+  const toggleFlag = (name: 'magnet' | 'lock' | 'visible' | 'keep'): void => {
     const next = { ...flags, [name]: !flags[name] }
     setFlags(next)
     panes.current.forEach((p) => p?.setFlags(next))
@@ -362,7 +367,11 @@ export default function App(): JSX.Element {
       }
       if (typing) return
       const p = pane()
-      if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
+      if ((e.ctrlKey || e.metaKey) && (k === 'c' || k === 'v') && !window.getSelection()?.toString()) {
+        e.preventDefault()
+        if (k === 'c') p?.copy()
+        else p?.paste()
+      } else if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'y')) {
         e.preventDefault()
         if (k === 'y' || e.shiftKey) redo()
         else undo()
@@ -555,6 +564,7 @@ export default function App(): JSX.Element {
             )}
           </div>
           <div className="sep" />
+          <button className={`icon${flags.keep ? ' on' : ''}`} onClick={() => toggleFlag('keep')} title="Continuer à dessiner : l'outil reste actif après chaque dessin"><Icon name="keep" /></button>
           <button className={`icon${flags.magnet ? ' on' : ''}`} onClick={() => toggleFlag('magnet')} title="Aimant : accroche les dessins aux prix des bougies"><Icon name="magnet" /></button>
           <button className={`icon${flags.lock ? ' on' : ''}`} onClick={() => toggleFlag('lock')} title="Verrouiller tous les dessins"><Icon name="lock" /></button>
           <button className={`icon${!flags.visible ? ' on' : ''}`} onClick={() => toggleFlag('visible')} title="Masquer / afficher les dessins">
@@ -571,7 +581,7 @@ export default function App(): JSX.Element {
                 onActivate={() => i !== idx && !replay.active && setActiveIdx(i)}
                 onReplay={(s) => i === idx && setReplay(s)} onMessage={message}
                 onDrawings={(source, symbol, before, after) => history.push({ kind: 'drawings', source, symbol, before, after })}
-                onContext={(at) => { closeMenus(); setChartMenu(at) }} />
+                onContext={(at) => { closeMenus(); setChartMenu(at) }} onAlert={(price) => openAlert(price)} />
             ))}
             <Favorites tools={layout.favorites} pos={layout.favPos} onMove={(favPos) => patchLayout({ favPos })} onDraw={draw} onMenu={openToolMenu} />
           </div>

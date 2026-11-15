@@ -561,7 +561,7 @@ interface ExtraTool { id: string; label: string; icon: string }
 /** Outils ajoutés, rangés par catégorie de la barre de gauche. */
 export const EXTRA_TOOLS: Record<string, ExtraTool[]> = {
   Lignes: [
-    { id: 'crossLine', label: 'Ligne croisée', icon: '┼' },
+    { id: 'crossLine', label: 'Ligne transversale', icon: '┼' },
     { id: 'polyline', label: 'Polyligne (6 points)', icon: '⌇' },
   ],
   Canaux: [{ id: 'pitchfork', label: 'Fourchette d’Andrews (3 clics)', icon: '⑂' }],

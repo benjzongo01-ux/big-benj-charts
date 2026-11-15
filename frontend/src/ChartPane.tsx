@@ -3,10 +3,13 @@
 import { dispose, init, type ActionType, type Chart, type OverlayCreate, type OverlayEvent } from 'klinecharts'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
 import { api, fetchCandles, fmt, openStream, TF_LABEL, TF_MS, type Bar } from './api'
-import { Icon } from './icons'
-import { INDICATORS, registerTools, TEXT_TOOLS } from './overlays'
+import DrawToolbar, { type DrawPoint } from './DrawToolbar'
+import { findTool, INDICATORS, registerTools, TEXT_TOOLS } from './overlays'
 import type { TradingSession } from './session'
 import { alerts, quotes, type PaneConfig } from './stores'
+import {
+  DEFAULT_PROPS, drawData, drawProps, INLINE_TEXT_TOOLS, libraryStyles, pathName, POSITION_TOOLS, positionPoints, type DrawProps,
+} from './tvtools'
 
 export type { PaneConfig }
 
@@ -19,13 +22,12 @@ export interface ReplayState {
   picking: boolean
 }
 
-export interface DrawStyle { color: string; size: number }
-
 export interface SavedDrawing {
   name: string
   points: { timestamp?: number; value?: number }[]
   extendData?: unknown
-  style?: DrawStyle
+  /** Propriétés du dessin (couleur, épaisseur, texte, verrou…). */
+  style?: Partial<DrawProps>
 }
 
 export interface PaneHandle {
@@ -37,7 +39,9 @@ export interface PaneHandle {
   clearDrawings: () => void
   restoreDrawings: (list: SavedDrawing[]) => void
   addHorizontalLine: (price: number) => void
-  setFlags: (flags: { magnet?: boolean; lock?: boolean; visible?: boolean }) => void
+  setFlags: (flags: { magnet?: boolean; lock?: boolean; visible?: boolean; keep?: boolean }) => void
+  copy: () => void
+  paste: () => void
   screenshot: () => void
   goTo: (ts: number) => void
   goToDate: (ts: number) => Promise<void>
@@ -69,23 +73,22 @@ interface Props {
   onDrawings: (source: string, symbol: string, before: SavedDrawing[], after: SavedDrawing[]) => void
   /** Clic droit sur le graphique : position de la souris et prix visé. */
   onContext: (at: { x: number; y: number; price: number }) => void
+  /** Créer une alerte au prix d'un dessin. */
+  onAlert: (price: number) => void
 }
 
 const IDLE: ReplayState = { active: false, playing: false, time: 0, left: 0, speed: 4, picking: false }
 const REPLAY_MAX_BARS = 60_000
 const ALERT_COLOR = '#f5b800'
-const DRAW_COLORS = ['#2962ff', '#26a69a', '#ef5350', '#f5b800', '#ff9800', '#9c27b0', '#ffffff', '#787b86']
-const DRAW_SIZES = [1, 2, 4]
 
-const tint = (color: string, alpha: number): string => {
-  const n = parseInt(color.slice(1), 16)
-  return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`
-}
-/** Styles d'un dessin pour une couleur et une épaisseur données. */
-function drawStyles(name: string, st: DrawStyle): OverlayCreate['styles'] {
-  const shape = { color: tint(st.color, 0.15), borderColor: st.color, borderSize: st.size }
-  const text = name === 'simpleAnnotation' || name === 'simpleTag' ? { backgroundColor: st.color } : { color: st.color }
-  return { line: { color: st.color, size: st.size }, polygon: shape, circle: shape, rect: shape, arc: { color: st.color, size: st.size }, text } as OverlayCreate['styles']
+/** Dessins copiés (Ctrl+C), partagés entre graphiques. */
+let clipboard: SavedDrawing[] = []
+
+/** Propriétés complètes d'un dessin : celles enregistrées, complétées par les valeurs par défaut de l'outil. */
+function fullProps(name: string, saved?: Partial<DrawProps>): DrawProps {
+  const base: DrawProps = INLINE_TEXT_TOOLS.has(name) ? { ...DEFAULT_PROPS, textColor: '#2962ff', fontSize: 14 }
+    : POSITION_TOOLS.has(name) ? { ...DEFAULT_PROPS, size: 1, account: 1000, risk: 25 } : { ...DEFAULT_PROPS }
+  return { ...base, ...(saved ?? {}) }
 }
 
 function themeStyles(theme: 'dark' | 'light', chartType: string): Record<string, unknown> {
@@ -136,24 +139,24 @@ function QuickTrade({ session, precision, onMessage }: { session: TradingSession
 }
 
 const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
-  const { config, theme, chartType, active, session, onActivate, onReplay, onMessage, onDrawings, onContext } = props
+  const { config, theme, chartType, active, session, onActivate, onReplay, onMessage, onDrawings, onContext, onAlert } = props
   const box = useRef<HTMLDivElement>(null)
   const head = useRef<HTMLSpanElement>(null)
   const chart = useRef<Chart | null>(null)
   const [loading, setLoading] = useState(true)
   const [reload, setReload] = useState(0)
-  const [sel, setSel] = useState<{ id: string; name: string; color: string; size: number } | null>(null)
+  const [sel, setSel] = useState<{ id: string; name: string; v: number } | null>(null)
+  const [editor, setEditor] = useState<{ id: string; x: number; y: number; value: string; size: number; color: string; fresh: boolean } | null>(null)
 
   // État impératif (aucun re-rendu React pendant la lecture ou le temps réel).
   const cfg = useRef(config)
   cfg.current = config
-  const cb = useRef({ onReplay, onMessage, onActivate, onDrawings, onContext, session, active })
-  cb.current = { onReplay, onMessage, onActivate, onDrawings, onContext, session, active }
+  const cb = useRef({ onReplay, onMessage, onActivate, onDrawings, onContext, onAlert, session, active })
+  cb.current = { onReplay, onMessage, onActivate, onDrawings, onContext, onAlert, session, active }
   const drawings = useRef(new Map<string, string>())      // id -> nom de l'outil
   const indicatorPanes = useRef(new Map<string, string>()) // indicateur -> id de fenêtre
-  const flags = useRef({ magnet: false, lock: false, visible: true })
+  const flags = useRef({ magnet: false, lock: false, visible: true, keep: false })
   const selected = useRef<string | null>(null)
-  const styleMap = useRef(new Map<string, DrawStyle>())   // id -> couleur et épaisseur choisies
   const symKey = useRef('')
   const reloadSeen = useRef(0)
   const switchToken = useRef(0)
@@ -231,6 +234,22 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
   }, [theme, chartType])
 
   // ---------------------------------------------------------------- dessins
+  /** Bougies futures : un point placé à droite de la dernière bougie est enregistré par une date extrapolée. */
+  const lastBar = (): { idx: number; ts: number } => {
+    const list = chart.current?.getDataList() ?? []
+    return { idx: list.length - 1, ts: list[list.length - 1]?.timestamp ?? Date.now() }
+  }
+  const toSaved = (p: { timestamp?: number; dataIndex?: number; value?: number }): { timestamp?: number; value?: number } => {
+    if (p.timestamp !== undefined || p.dataIndex === undefined) return { timestamp: p.timestamp, value: p.value }
+    const last = lastBar()
+    return { timestamp: last.ts + (p.dataIndex - last.idx) * TF_MS[cfg.current.tf], value: p.value }
+  }
+  const fromSaved = (p: { timestamp?: number; value?: number }): { timestamp?: number; dataIndex?: number; value?: number } => {
+    const last = lastBar()
+    if (p.timestamp === undefined || p.timestamp <= last.ts || last.idx < 0) return p
+    return { dataIndex: last.idx + Math.round((p.timestamp - last.ts) / TF_MS[cfg.current.tf]), value: p.value }
+  }
+
   const collect = (): SavedDrawing[] => {
     const c = chart.current
     const data: SavedDrawing[] = []
@@ -238,8 +257,8 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     drawings.current.forEach((name, id) => {
       if (id === drawingId.current) return // dessin en cours de tracé : pas encore un vrai dessin
       const o = c.getOverlayById(id)
-      const style = styleMap.current.get(id)
-      if (o) data.push({ name, points: o.points.map((p) => ({ timestamp: p.timestamp, value: p.value })), extendData: o.extendData, ...(style ? { style } : {}) })
+      const style = drawProps.get(id)
+      if (o) data.push({ name, points: o.points.map(toSaved), extendData: o.extendData, ...(style ? { style } : {}) })
     })
     return data
   }
@@ -260,20 +279,77 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     }, 300)
   }
 
+  /** Visible si l'utilisateur ne l'a ni caché, ni masqué pour cette unité de temps, et si les dessins sont affichés. */
+  const isVisible = (p: DrawProps): boolean => flags.current.visible && !p.hidden && !(p.hideOn ?? []).includes(cfg.current.tf)
+
+  /** Applique des propriétés à un dessin déjà affiché. */
+  const applyLive = (id: string, p: DrawProps): void => {
+    const name = drawings.current.get(id) ?? ''
+    drawProps.set(id, p)
+    chart.current?.overrideOverlay({
+      id, styles: libraryStyles(name, p), lock: !!p.lock || flags.current.lock, visible: isVisible(p), zLevel: p.z ?? 0,
+    })
+  }
+
+  /** Ouvre la zone de saisie du texte, posée sur le graphique à l'endroit du dessin. */
+  const openEditor = (id: string, fresh: boolean): void => {
+    const c = chart.current
+    const o = c?.getOverlayById(id)
+    if (!c || !o?.points.length) return
+    const px = c.convertToPixel(o.points[0], { paneId: 'candle_pane' }) as { x?: number; y?: number }
+    const p = drawProps.get(id) ?? fullProps('textNote')
+    setEditor({ id, x: px.x ?? 40, y: px.y ?? 40, value: String(o.extendData ?? ''), size: p.fontSize ?? 14, color: p.textColor ?? p.color, fresh })
+  }
+  const closeEditor = (commit: boolean): void => {
+    setEditor((ed) => {
+      if (!ed) return null
+      const c = chart.current
+      const value = ed.value.trim() ? ed.value : ''
+      if (commit && value) {
+        c?.overrideOverlay({ id: ed.id, extendData: value })
+        scheduleSave()
+      } else if (!value && (ed.fresh || commit)) {
+        c?.removeOverlay(ed.id) // texte vide : rien n'est posé
+      }
+      return null
+    })
+  }
+
   const overlayEvents = (): Partial<OverlayCreate> => ({
-    onDrawEnd: () => {
+    onDrawEnd: (e: OverlayEvent) => {
+      const c = chart.current
+      const o = e.overlay
       drawingId.current = null
+      if (c && POSITION_TOOLS.has(o.name) && o.points.length === 1) {
+        // Position posée d'un clic : cible et stop à égale distance, 25 bougies de large (comme sur TradingView).
+        const size = c.getSize('candle_pane', 'main' as never)
+        const top = c.convertFromPixel([{ x: 0, y: 0 }], { paneId: 'candle_pane' }) as { value?: number }[]
+        const bottom = c.convertFromPixel([{ x: 0, y: size?.height ?? 300 }], { paneId: 'candle_pane' }) as { value?: number }[]
+        const span = Math.abs((top[0]?.value ?? 0) - (bottom[0]?.value ?? 0)) || Math.abs(o.points[0].value ?? 1) * 0.02
+        const list = c.getDataList()
+        const p0 = o.points[0]
+        const entry = { dataIndex: p0.dataIndex ?? list.length - 1, value: p0.value ?? 0 }
+        c.overrideOverlay({ id: o.id, points: positionPoints(o.name, entry, span, (i) => list[i]?.timestamp) })
+      }
+      if (INLINE_TEXT_TOOLS.has(o.name)) openEditor(o.id, true)
+      else if (o.name === 'path') {
+        // Le double-clic qui termine le chemin ajoute un point en double : il est retiré.
+        const pts = o.points.filter((pt, i, all) => i === 0 || pt.dataIndex !== all[i - 1].dataIndex || pt.value !== all[i - 1].value)
+        if (pts.length !== o.points.length) c?.overrideOverlay({ id: o.id, points: pts })
+      }
       scheduleSave()
+      // « Continuer à dessiner » : le même outil reste actif pour le dessin suivant.
+      if (flags.current.keep && !INLINE_TEXT_TOOLS.has(o.name)) window.setTimeout(() => startTool(o.name), 0)
       return false
     },
     onPressedMoveEnd: () => {
       scheduleSave()
+      setSel((s) => (s ? { ...s, v: s.v + 1 } : s))
       return false
     },
     onSelected: (e: OverlayEvent) => {
       selected.current = e.overlay.id
-      const st = styleMap.current.get(e.overlay.id)
-      setSel({ id: e.overlay.id, name: e.overlay.name, color: st?.color ?? DRAW_COLORS[0], size: st?.size ?? 1 })
+      if (drawings.current.has(e.overlay.id)) setSel({ id: e.overlay.id, name: drawings.current.get(e.overlay.id) ?? e.overlay.name, v: 0 })
       return false
     },
     onDeselected: () => {
@@ -281,9 +357,14 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       setSel(null)
       return false
     },
+    onDoubleClick: (e: OverlayEvent) => {
+      if (INLINE_TEXT_TOOLS.has(e.overlay.name)) openEditor(e.overlay.id, false)
+      return false
+    },
     onRemoved: (e: OverlayEvent) => {
       drawings.current.delete(e.overlay.id)
-      styleMap.current.delete(e.overlay.id)
+      drawProps.delete(e.overlay.id)
+      drawData.delete(e.overlay.id)
       setSel((s) => (s?.id === e.overlay.id ? null : s))
       scheduleSave()
       return false
@@ -292,49 +373,128 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     onRightClick: () => true,
   })
 
-  const addDrawing = (o: OverlayCreate, style?: DrawStyle): string | null => {
+  const addDrawing = (o: OverlayCreate, saved?: Partial<DrawProps>): string | null => {
     const c = chart.current
     if (!c) return null
+    const name = o.name
+    const p = fullProps(name, saved)
+    // Un chemin terminé se réaffiche avec un gabarit à son nombre exact de points.
+    const shown = name === 'path' && o.points && o.points.length > 1 ? pathName(o.points.length) : name
     const id = c.createOverlay({
       ...o,
-      ...(style ? { styles: drawStyles(o.name, style) } : {}),
+      name: shown,
+      points: o.points?.map(fromSaved),
+      styles: libraryStyles(name, p),
       ...overlayEvents(),
-      lock: flags.current.lock,
-      visible: flags.current.visible,
+      lock: !!p.lock || flags.current.lock,
+      visible: isVisible(p),
+      zLevel: p.z ?? 0,
       mode: (flags.current.magnet ? 'weak_magnet' : 'normal') as OverlayCreate['mode'],
     }) as string | null
-    if (id) drawings.current.set(id, o.name)
-    if (id && style) styleMap.current.set(id, style)
+    if (id) {
+      drawings.current.set(id, name)
+      drawProps.set(id, p)
+      drawData.set(id, () => chart.current?.getDataList() ?? [])
+    }
     return id
   }
 
-  /** Change la couleur ou l'épaisseur du dessin sélectionné. */
-  const restyle = (patch: Partial<DrawStyle>): void => {
+  /** Arme un outil : le prochain clic sur le graphique pose le dessin. */
+  function startTool(tool: string, data?: unknown): void {
+    const c = chart.current
+    if (!c) return
+    if (drawingId.current) {
+      drawings.current.delete(drawingId.current)
+      c.removeOverlay(drawingId.current)
+    }
+    let extendData = data
+    if (TEXT_TOOLS.has(tool)) {
+      const text = window.prompt('Texte à afficher :', '')
+      if (!text) return
+      extendData = text
+    }
+    drawingId.current = addDrawing({ name: tool, extendData })
+  }
+
+  // ---------------------------------------------------------------- actions sur le dessin sélectionné
+  const selProps = (): DrawProps => (sel ? drawProps.get(sel.id) ?? fullProps(sel.name) : DEFAULT_PROPS)
+  const changeSel = (patch: Partial<DrawProps>): void => {
     if (!sel) return
-    const style = { color: patch.color ?? sel.color, size: patch.size ?? sel.size }
-    chart.current?.overrideOverlay({ id: sel.id, styles: drawStyles(sel.name, style) })
-    styleMap.current.set(sel.id, style)
-    setSel({ ...sel, ...style })
+    applyLive(sel.id, { ...selProps(), ...patch })
+    if (patch.hidden) {
+      chart.current?.overrideOverlay({ id: sel.id, visible: false })
+      setSel(null)
+    } else setSel({ ...sel, v: sel.v + 1 })
     scheduleSave()
   }
-  const retext = (): void => {
+  const selPoints = (): DrawPoint[] => (sel ? (chart.current?.getOverlayById(sel.id)?.points ?? []).map(toSaved) : [])
+  const pointsSel = (pts: DrawPoint[]): void => {
     if (!sel) return
     const o = chart.current?.getOverlayById(sel.id)
-    const text = window.prompt('Nouveau texte :', String(o?.extendData ?? ''))
-    if (!text) return
-    chart.current?.overrideOverlay({ id: sel.id, extendData: text })
+    if (!o) return
+    // Le nouveau prix remplace l'ancien ; la position dans le temps de chaque point ne change pas.
+    chart.current?.overrideOverlay({ id: sel.id, points: o.points.map((pt, i) => ({ ...pt, value: pts[i]?.value ?? pt.value })) })
+    setSel({ ...sel, v: sel.v + 1 })
     scheduleSave()
+  }
+  const snapshotOf = (id: string): SavedDrawing | null => {
+    const o = chart.current?.getOverlayById(id)
+    const name = drawings.current.get(id)
+    if (!o || !name) return null
+    return { name, points: o.points.map(toSaved), extendData: o.extendData, style: { ...(drawProps.get(id) ?? {}) } }
+  }
+  const pasteAll = (list: SavedDrawing[], shiftBars: number): void => {
+    const step = TF_MS[cfg.current.tf]
+    list.forEach((d) => {
+      const pts = d.points.map((p) => ({ ...p, timestamp: p.timestamp !== undefined ? p.timestamp + shiftBars * step : p.timestamp }))
+      addDrawing({ name: d.name, points: pts, extendData: d.extendData }, { ...d.style, lock: false, hidden: false })
+    })
+    scheduleSave()
+  }
+  const cloneSel = (): void => {
+    const d = sel && snapshotOf(sel.id)
+    if (d) pasteAll([d], 5)
+  }
+  const copySel = (): void => {
+    const d = sel && snapshotOf(sel.id)
+    if (!d) return
+    clipboard = [d]
+    cb.current.onMessage('Dessin copié : Ctrl+V pour le coller.')
+  }
+  const orderSel = (where: 'front' | 'back'): void => {
+    const all = [...drawProps.values()].map((p) => p.z ?? 0)
+    changeSel({ z: where === 'front' ? Math.max(0, ...all) + 1 : Math.min(0, ...all) - 1 })
+  }
+  const alertSel = (): void => {
+    const pts = selPoints().filter((p) => p.value !== undefined)
+    if (!pts.length || !sel) return
+    // Position : alerte sur la cible ; autres dessins : sur le dernier point posé.
+    const pick = POSITION_TOOLS.has(sel.name) ? pts[2] ?? pts[0] : pts[pts.length - 1]
+    cb.current.onAlert(pick.value ?? 0)
   }
 
   const wipeDrawings = (): void => {
     const c = chart.current
     const ids = [...drawings.current.keys()]
     drawings.current.clear()
-    styleMap.current.clear()
+    ids.forEach((id) => {
+      drawProps.delete(id)
+      drawData.delete(id)
+    })
     drawingId.current = null
     setSel(null)
+    setEditor(null)
     ids.forEach((id) => c?.removeOverlay(id))
   }
+
+  // Masquage par unité de temps : appliqué à chaque changement d'unité.
+  useEffect(() => {
+    drawings.current.forEach((_, id) => {
+      const p = drawProps.get(id)
+      if (p) chart.current?.overrideOverlay({ id, visible: isVisible(p) })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.tf])
 
   // ---------------------------------------------------------------- lignes d'ordres (trading)
   const priceLine = (group: string, value: number, text: string, color: string, locked: boolean, onMove?: (v: number) => void): void => {
@@ -490,7 +650,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       .then((list) => {
         if (dead) return
         list.forEach((d) => addDrawing({ name: d.name, points: d.points, extendData: d.extendData }, d.style))
-        snapshot.current = JSON.stringify(list)
+        snapshot.current = JSON.stringify(collect())
       })
       .catch(() => undefined)
     return () => {
@@ -699,21 +859,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       }
       return [...map.keys()]
     },
-    draw: (tool, data) => {
-      const c = chart.current
-      if (!c) return
-      if (drawingId.current) {
-        drawings.current.delete(drawingId.current)
-        c.removeOverlay(drawingId.current)
-      }
-      let extendData = data
-      if (TEXT_TOOLS.has(tool)) {
-        const text = window.prompt('Texte à afficher :', '')
-        if (!text) return
-        extendData = text
-      }
-      drawingId.current = addDrawing({ name: tool, extendData })
-    },
+    draw: (tool, data) => startTool(tool, data),
     cancelDraw: () => {
       if (drawingId.current) {
         const id = drawingId.current
@@ -748,10 +894,22 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     setFlags: (f) => {
       Object.assign(flags.current, f)
       const c = chart.current
-      drawings.current.forEach((_, id) => c?.overrideOverlay({
-        id, lock: flags.current.lock, visible: flags.current.visible,
-        mode: (flags.current.magnet ? 'weak_magnet' : 'normal') as OverlayCreate['mode'],
-      }))
+      drawings.current.forEach((_, id) => {
+        const p = drawProps.get(id) ?? DEFAULT_PROPS
+        // Réafficher tous les dessins fait aussi réapparaître ceux cachés un par un.
+        if (f.visible === true && p.hidden) drawProps.set(id, { ...p, hidden: false })
+        c?.overrideOverlay({
+          id, lock: flags.current.lock || !!p.lock, visible: isVisible(drawProps.get(id) ?? p),
+          mode: (flags.current.magnet ? 'weak_magnet' : 'normal') as OverlayCreate['mode'],
+        })
+      })
+      if (f.visible === true) scheduleSave()
+    },
+    copy: () => copySel(),
+    paste: () => {
+      if (!clipboard.length) return
+      // Collé sur ce graphique, décalé de quelques bougies pour ne pas recouvrir l'original.
+      pasteAll(clipboard, clipboard.some((d) => drawings.current.size && d.points.length) ? 5 : 0)
     },
     screenshot: () => {
       const c = chart.current
@@ -843,23 +1001,27 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
         <span ref={head} className="ph-ohlc" />
         {tradable && <QuickTrade session={session} precision={config.precision} onMessage={onMessage} />}
       </div>
-      {sel && (
-        <div className="draw-bar" onMouseDown={(e) => e.stopPropagation()} onContextMenu={(e) => e.stopPropagation()}>
-          {DRAW_COLORS.map((c) => (
-            <button key={c} className={`swatch${sel.color === c ? ' on' : ''}`} style={{ background: c }} title="Couleur du dessin" onClick={() => restyle({ color: c })} />
-          ))}
-          <span className="vsep" />
-          {DRAW_SIZES.map((n) => (
-            <button key={n} className={`icon${sel.size === n ? ' on' : ''}`} title={`Épaisseur ${n}`} onClick={() => restyle({ size: n })}>
-              <span className="stroke" style={{ height: n }} />
-            </button>
-          ))}
-          {(TEXT_TOOLS.has(sel.name)) && (
-            <button className="icon" title="Modifier le texte" onClick={retext}><Icon name="edit" size={15} /></button>
-          )}
-          <span className="vsep" />
-          <button className="icon danger" title="Supprimer ce dessin (Suppr)" onClick={() => chart.current?.removeOverlay(sel.id)}><Icon name="trash" size={15} /></button>
-        </div>
+      {sel && !editor && sel.id !== drawingId.current && (
+        <DrawToolbar key={sel.id} name={sel.name} label={findTool(sel.name)?.label ?? 'Dessin'} props={selProps()} points={selPoints()}
+          text={String(chart.current?.getOverlayById(sel.id)?.extendData ?? '')} precision={config.precision}
+          onChange={changeSel} onPoints={pointsSel}
+          onText={(t) => {
+            if (!t.trim()) chart.current?.removeOverlay(sel.id)
+            else { chart.current?.overrideOverlay({ id: sel.id, extendData: t }); scheduleSave() }
+          }}
+          onAlert={alertSel} onDelete={() => chart.current?.removeOverlay(sel.id)} onClone={cloneSel} onCopy={copySel} onOrder={orderSel} />
+      )}
+      {editor && (
+        <textarea className="text-editor" autoFocus value={editor.value} placeholder="Ajouter du texte"
+          style={{ left: editor.x, top: editor.y - editor.size, fontSize: editor.size, color: editor.color }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onChange={(e) => setEditor({ ...editor, value: e.target.value })}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); closeEditor(true) }
+            if (e.key === 'Escape') closeEditor(false)
+          }}
+          onBlur={() => closeEditor(true)} />
       )}
       {loading && <div className="pane-loading"><span className="spinner" />Chargement…</div>}
     </div>

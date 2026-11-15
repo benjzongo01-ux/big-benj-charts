@@ -331,22 +331,60 @@ button svg { flex: none; }
   .range-bar button { padding: 3px 5px; }
 }
 
-/* ---------- menu du dessin sélectionné */
+/* ---------- barre d'options du dessin sélectionné (modèle TradingView) */
 .draw-bar {
-  position: absolute; left: 50%; top: 82px; transform: translateX(-50%); z-index: 8; display: flex; align-items: center; gap: 3px;
-  padding: 4px 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  position: absolute; right: 84px; top: 96px; z-index: 8; display: flex; align-items: center; gap: 1px;
+  padding: 3px 4px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
 }
-.draw-bar .swatch { width: 18px; height: 18px; min-width: 0; padding: 0; border-radius: 50%; border: 2px solid transparent; }
-.draw-bar .swatch.on { border-color: var(--text); }
-.draw-bar .swatch:hover:not(:disabled) { filter: brightness(1.15); }
-.draw-bar button.icon { width: 28px; height: 26px; padding: 0; }
-.draw-bar .stroke { display: block; width: 16px; background: currentColor; border-radius: 2px; }
+.draw-bar button.icon { width: 32px; height: 30px; padding: 0; position: relative; }
 .draw-bar .danger:hover:not(:disabled) { color: var(--down); background: rgba(239, 83, 80, 0.15); }
+.db-grip { display: flex; align-items: center; padding: 0 3px; color: var(--muted); cursor: grab; touch-action: none; }
+.db-item { position: relative; display: flex; }
+.db-color { display: inline-flex; flex-direction: column; align-items: center; gap: 2px; }
+.db-color i { display: block; width: 16px; height: 3px; border-radius: 2px; }
+.db-t { font: 600 15px/1 Georgia, serif; }
+.db-wide { height: 30px; padding: 0 8px; gap: 6px; font-size: 12px; }
+.db-stroke { display: inline-block; width: 16px; background: currentColor; border-radius: 1px; }
+.db-dash { display: inline-block; width: 18px; border-top: 2px solid currentColor; }
+.pop {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+.pop.right { left: auto; right: 0; }
+.pop.list { display: flex; flex-direction: column; min-width: 150px; }
+.pop.list button { justify-content: flex-start; gap: 10px; padding: 6px 10px; }
+.pop.list button em { margin-left: auto; padding-left: 14px; color: var(--muted); font-style: normal; font-size: 11px; }
+.pop.list .sep { height: 1px; background: var(--border); margin: 4px 0; }
+.palette { width: 236px; }
+.pal-row { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin-bottom: 3px; }
+.pal-row.gap { margin-top: 8px; }
+.sw { width: 19px; height: 19px; min-width: 0; padding: 0; border-radius: 3px; border: 1px solid rgba(255, 255, 255, 0.08); }
+.sw.on { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pal-custom { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.pal-custom input { width: 26px; height: 22px; padding: 0; border: 0; background: none; }
+.pal-opacity { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--muted); }
+.pal-opacity input { flex: 1; }
+.pal-opacity b { color: var(--text); min-width: 38px; text-align: right; }
 
-/* ---------- cet appareil : notifications et installation */
-.device { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
-.device-state { display: flex; align-items: flex-start; gap: 4px; font-size: 12px; line-height: 1.4; }
-.device-state .dot { margin-top: 4px; }
-.device button { border: 1px solid var(--border); padding: 6px 8px; white-space: normal; }
-.device button.primary { border-color: var(--accent); }
-.device .side-note { padding: 0; }
+/* ---------- fenêtre de réglages d'un dessin */
+.modal.settings { width: min(400px, 94vw); max-height: 80vh; }
+.modal.settings .modal-head { justify-content: space-between; align-items: center; padding: 12px 14px 4px; }
+.modal.settings .modal-head b { font-size: 15px; }
+.settings-body { padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 160px; }
+.s-row { display: flex; align-items: center; gap: 8px; }
+.s-row > span { min-width: 130px; color: var(--muted); font-size: 12.5px; }
+.s-row input:not([type=color]):not([type=range]) { width: 110px; }
+.s-row input[type=color] { width: 32px; height: 26px; padding: 0; border: 1px solid var(--border); }
+.s-row small { color: var(--muted); font-size: 11px; }
+.s-check { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.s-sub { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; margin-top: 4px; }
+.s-tfs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.s-text { min-height: 80px; resize: vertical; font-size: 13px; }
+.fmt { width: 30px; border: 1px solid var(--border); }
+.modal.settings .modal-actions { padding: 10px 14px 14px; }
+
+/* ---------- texte saisi directement sur le graphique */
+.text-editor {
+  position: absolute; z-index: 9; min-width: 140px; min-height: 30px; padding: 2px 4px; resize: both; line-height: 1.25;
+  background: rgba(19, 23, 34, 0.85); border: 1px solid var(--accent); border-radius: 3px; font-family: inherit;
+}

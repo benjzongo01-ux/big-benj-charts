@@ -2,6 +2,7 @@
 import { registerLocale, registerOverlay, type Coordinate, type OverlayFigure, type OverlayTemplate } from 'klinecharts'
 
 import { EXTRA_INDICATORS, EXTRA_TOOLS, registerExtraIndicators, registerExtraTools } from './extras'
+import { applyProps, registerTvTools } from './tvtools'
 
 const BLUE = '#2962ff'
 const GREEN = '#26a69a'
@@ -135,18 +136,7 @@ function recolor(t: OverlayTemplate): OverlayTemplate {
   if (!make || KEEP_COLORS.has(t.name)) return t
   return {
     ...t,
-    createPointFigures: (params) => {
-      const figures = make(params)
-      const st = params.overlay.styles as { line?: { color?: string; size?: number } } | null
-      const color = st?.line?.color
-      if (!color) return figures
-      return (Array.isArray(figures) ? figures : [figures]).map((f): OverlayFigure => {
-        const s = (f.styles ?? {}) as Record<string, unknown>
-        if (f.type === 'line') return { ...f, styles: { ...s, color, size: st?.line?.size ?? 1 } }
-        if (f.type === 'text') return s.backgroundColor && s.backgroundColor !== 'transparent' ? { ...f, styles: { ...s, backgroundColor: color } } : f
-        return { ...f, styles: { ...s, borderColor: color, borderSize: st?.line?.size ?? 1, color: s.style === 'fill' ? fill(color, 0.9) : fill(color, 0.15) } }
-      })
-    },
+    createPointFigures: (params) => applyProps(params.overlay.id, make(params), true),
   }
 }
 
@@ -157,6 +147,7 @@ export function registerTools(): void {
   done = true
   templates.forEach((t) => registerOverlay(recolor(t)))
   registerExtraTools(recolor)
+  registerTvTools() // ligne de tendance, chemin, texte et positions (remplacent les versions simples)
   registerExtraIndicators()
   registerLocale('fr-FR', {
     time: 'Date : ', open: 'Ouv. : ', high: 'Haut : ', low: 'Bas : ', close: 'Clôt. : ', volume: 'Volume : ',
@@ -172,6 +163,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
   {
     label: 'Lignes', icon: '╱', tools: [
       { id: 'segment', label: 'Ligne de tendance', icon: '╱', hint: 'Alt+T' },
+      { id: 'path', label: 'Chemin (double-clic pour terminer)', icon: '⌇' },
       { id: 'rayLine', label: 'Rayon', icon: '↗' },
       { id: 'straightLine', label: 'Ligne étendue', icon: '⟋' },
       { id: 'arrow', label: 'Segment fléché', icon: '➚' },
@@ -209,7 +201,8 @@ export const TOOL_GROUPS: ToolGroup[] = [
   },
   {
     label: 'Positions et mesure', icon: '⇅', tools: [
-      { id: 'position', label: 'Position achat / vente (entrée, stop, objectif)', icon: '⇅' },
+      { id: 'longPosition', label: 'Position longue', icon: 'L' },
+      { id: 'shortPosition', label: 'Position courte', icon: 'S' },
       { id: 'measure', label: 'Règle (prix, %, bougies)', icon: '📏' },
     ],
   },
@@ -223,7 +216,7 @@ for (const [label, tools] of Object.entries(EXTRA_TOOLS)) {
 }
 
 /** Outils qui demandent un texte à l'utilisateur avant d'être posés. */
-export const TEXT_TOOLS = new Set(['textNote', 'simpleAnnotation', 'simpleTag'])
+export const TEXT_TOOLS = new Set(['simpleAnnotation', 'simpleTag'])
 
 /** Indicateurs : nom affiché + emplacement (sur le prix ou dans une sous-fenêtre). */
 export const INDICATORS: { id: string; label: string; main: boolean }[] = [
@@ -287,14 +280,16 @@ export const GROUP_ICON: Record<string, string> = {
 export const TOOL_ICON: Record<string, string> = {
   segment: 'line', rayLine: 'ray', horizontalStraightLine: 'hline', horizontalRayLine: 'hray', verticalStraightLine: 'vline',
   crossLine: 'cross', rect: 'shape', fibonacciLine: 'fib', fibExtension: 'fibext', parallelStraightLine: 'channel',
-  textNote: 'text', measure: 'ruler', position: 'position',
+  textNote: 'text', measure: 'ruler', position: 'position', path: 'path', longPosition: 'long', shortPosition: 'short',
 }
 
 /** Favoris proposés au premier lancement (modifiable par clic droit sur un outil). */
+// Même barre de favoris que sur TradingView, dans le même ordre.
 export const DEFAULT_FAVORITES = [
-  'segment', 'rect', 'fibonacciLine', 'fibExtension', 'parallelStraightLine', 'textNote',
-  'rayLine', 'horizontalStraightLine', 'horizontalRayLine', 'crossLine', 'verticalStraightLine',
+  'path', 'rect', 'shortPosition', 'longPosition', 'fibonacciLine', 'textNote',
+  'segment', 'horizontalRayLine', 'horizontalStraightLine', 'crossLine', 'verticalStraightLine',
 ]
+export const FAVORITES_VERSION = 2
 
 export function findTool(id: string): Tool | undefined {
   for (const g of TOOL_GROUPS) {
