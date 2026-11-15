@@ -285,6 +285,11 @@ export default function App(): JSX.Element {
   }, [pane, settings.layout])
 
   const update = (patch: Partial<Settings>): void => setSettings((s) => ({ ...s, ...patch }))
+  /** Choisir une paire ; si c'est déjà celle affichée, le graphique revient au présent (vue normale). */
+  const pickPair = (source: string, symbol: string, precision: number): void => {
+    if (source === current.source && symbol === current.symbol) pane()?.resetView()
+    else setPane({ source, symbol, precision })
+  }
   const setPane = (patch: Partial<PaneConfig>): void =>
     setSettings((s) => ({ ...s, panes: s.panes.map((p, i) => (i === idx ? { ...p, ...patch } : p)) }))
   const patchLayout = (patch: Partial<Layout>): void => setLayout((l) => ({ ...l, ...patch }))
@@ -495,7 +500,7 @@ export default function App(): JSX.Element {
           onStar={toggleWatch}
           onPick={(s, source) => {
             if (replay.active) pane()?.exitReplay()
-            setPane({ source, symbol: s.symbol, precision: s.precision })
+            pickPair(source, s.symbol, s.precision)
             setMenu(null)
             setMtab('chart')
           }} />
@@ -572,7 +577,7 @@ export default function App(): JSX.Element {
             <div className="m-page">
               <Watch items={settings.watchlist} current={current} onAdd={() => setMenu('symbol')} onNewAlert={() => openAlert()}
                 onRemove={(w) => toggleWatch(w, w.source)}
-                onPick={(w) => { if (!replay.active) setPane({ source: w.source, symbol: w.symbol, precision: w.precision }); setMtab('chart') }} />
+                onPick={(w) => { if (!replay.active) pickPair(w.source, w.symbol, w.precision); setMtab('chart') }} />
             </div>
           )}
           {mtab === 'trade' && (
@@ -875,7 +880,7 @@ export default function App(): JSX.Element {
 
         <RightPanel tab={layout.side} width={Math.min(SIDE_MAX, Math.max(SIDE_MIN, layout.sideWidth))} items={settings.watchlist} current={current} session={session}
           onTab={(side) => patchLayout({ side })} onWidth={(sideWidth) => patchLayout({ sideWidth })}
-          onPick={(w) => !replay.active && setPane({ source: w.source, symbol: w.symbol, precision: w.precision })}
+          onPick={(w) => !replay.active && pickPair(w.source, w.symbol, w.precision)}
           onRemove={(w) => toggleWatch(w, w.source)} onAdd={() => { closeMenus(); setMenu('symbol') }}
           onNewAlert={() => openAlert()}
           onEditAlert={editAlert} />

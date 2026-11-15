@@ -39,6 +39,8 @@ export interface PaneHandle {
   removeSelected: () => void
   clearDrawings: () => void
   restoreDrawings: (list: SavedDrawing[]) => void
+  /** Revenir à la vue normale : dernière bougie, échelle de prix automatique. */
+  resetView: () => void
   addHorizontalLine: (price: number) => void
   setFlags: (flags: { magnet?: boolean; lock?: boolean; visible?: boolean; keep?: boolean }) => void
   copy: () => void
@@ -83,6 +85,65 @@ interface Props {
 const IDLE: ReplayState = { active: false, playing: false, time: 0, left: 0, speed: 4, picking: false }
 const REPLAY_MAX_BARS = 60_000
 const ALERT_COLOR = '#f5b800'
+
+// ---------------------------------------------------------------- vue mémorisée par paire
+/** Zoom, position dans le temps et échelle de prix d'une paire (pour la retrouver telle qu'on l'a laissée). */
+interface ChartView { barSpace: number; rightBars: number; auto: boolean; range: unknown }
+const VIEW_KEY = 'bbc_views'
+const views: Map<string, ChartView> = (() => {
+  try {
+    return new Map(Object.entries(JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') as Record<string, ChartView>))
+  } catch {
+    return new Map()
+  }
+})()
+function saveViews(): void {
+  try {
+    localStorage.setItem(VIEW_KEY, JSON.stringify(Object.fromEntries([...views.entries()].slice(-60))))
+  } catch {
+    /* stockage indisponible */
+  }
+}
+const DEFAULT_BAR_SPACE = 8
+
+/* La bibliothèque ne publie pas ces réglages : on passe par ses objets internes (version 9). */
+interface Internals {
+  getChartStore: () => { getTimeScaleStore: () => { getLastBarRightSideDiffBarCount: () => number; setLastBarRightSideDiffBarCount: (n: number) => void } }
+  getDrawPaneById: (id: string) => { getAxisComponent: () => { getAutoCalcTickFlag: () => boolean; setAutoCalcTickFlag: (f: boolean) => void; getRange: () => unknown; setRange: (r: unknown) => void } } | null
+  adjustPaneViewport: (...flags: boolean[]) => void
+}
+function readView(c: Chart): ChartView | null {
+  try {
+    const i = c as unknown as Internals
+    const axis = i.getDrawPaneById('candle_pane')?.getAxisComponent()
+    return {
+      barSpace: c.getBarSpace(), rightBars: i.getChartStore().getTimeScaleStore().getLastBarRightSideDiffBarCount(),
+      auto: axis?.getAutoCalcTickFlag() ?? true, range: axis?.getRange(),
+    }
+  } catch {
+    return null
+  }
+}
+function applyView(c: Chart, v: ChartView | null): void {
+  try {
+    const i = c as unknown as Internals
+    const axis = i.getDrawPaneById('candle_pane')?.getAxisComponent()
+    if (!v) {
+      // Vue « normale » : échelle de prix automatique, zoom par défaut, dernière bougie à l'écran.
+      axis?.setAutoCalcTickFlag(true)
+      c.setBarSpace(DEFAULT_BAR_SPACE)
+      c.scrollToRealTime()
+    } else {
+      c.setBarSpace(v.barSpace)
+      i.getChartStore().getTimeScaleStore().setLastBarRightSideDiffBarCount(v.rightBars)
+      if (v.auto || !v.range) axis?.setAutoCalcTickFlag(true)
+      else axis?.setRange(v.range)
+    }
+    i.adjustPaneViewport(false, true, true, true, true)
+  } catch {
+    c.scrollToRealTime()
+  }
+}
 
 /** Dessins copiés (Ctrl+C), partagés entre graphiques. */
 let clipboard: SavedDrawing[] = []
@@ -643,6 +704,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     if (!c) return
     let dead = false
     const { source, symbol, tf, precision } = config
+    const viewKey = `${source}:${symbol}:${tf}`
     // Pendant un replay, changer d'unité de temps ne quitte pas le replay : on reconstruit les bougies.
     if (replay.current.active && symKey.current === `${source}:${symbol}` && reloadSeen.current === reload) {
       void switchReplayTf(tf)
@@ -664,7 +726,13 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
         const bars = await fetchCandles(source, symbol, tf, { limit: Math.max(wanted, range === null ? 0 : 50) })
         if (dead) return
         c.applyNewData(bars, bars.length > 0)
-        if (range !== null) fit(Math.min(bars.length, wanted))
+        if (range !== null) {
+          fit(Math.min(bars.length, wanted))
+          ;(c as unknown as Internals).getDrawPaneById('candle_pane')?.getAxisComponent().setAutoCalcTickFlag(true)
+        } else {
+          const saved = views.get(viewKey)
+          window.setTimeout(() => { if (!dead) applyView(c, saved ?? null) }, 0)
+        }
         if (!hovering.current) showLast()
         if (bars.length) feed(bars[bars.length - 1].close)
         c.loadMore((ts) => {
@@ -693,6 +761,15 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       dead = true
       stopStream.current?.()
       stopStream.current = null
+      // On quitte cette paire (ou cette unité) : sa vue est mémorisée pour la retrouver telle quelle.
+      if (!replay.current.active) {
+        const v = readView(c)
+        if (v) {
+          views.delete(viewKey)
+          views.set(viewKey, v)
+          saveViews()
+        }
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.source, config.symbol, config.tf, reload])
@@ -965,6 +1042,13 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     clearDrawings: () => {
       wipeDrawings()
       scheduleSave()
+    },
+    resetView: () => {
+      const c = chart.current
+      if (!c || replay.current.active) return
+      views.delete(`${cfg.current.source}:${cfg.current.symbol}:${cfg.current.tf}`)
+      saveViews()
+      applyView(c, null)
     },
     restoreDrawings: (list) => {
       restoring.current = true
