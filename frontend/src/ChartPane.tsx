@@ -4,6 +4,7 @@ import { dispose, init, type ActionType, type Chart, type OverlayCreate, type Ov
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
 import { api, fetchCandles, fmt, openStream, TF_LABEL, TF_MS, type Bar } from './api'
 import DrawToolbar, { type DrawPoint } from './DrawToolbar'
+import { Icon } from './icons'
 import { findTool, INDICATORS, registerTools, TEXT_TOOLS } from './overlays'
 import type { TradingSession } from './session'
 import { alerts, quotes, type PaneConfig } from './stores'
@@ -75,6 +76,8 @@ interface Props {
   onContext: (at: { x: number; y: number; price: number }) => void
   /** Créer une alerte au prix d'un dessin. */
   onAlert: (price: number) => void
+  /** Modifier une alerte (clic sur sa ligne). */
+  onEditAlert: (id: string) => void
 }
 
 const IDLE: ReplayState = { active: false, playing: false, time: 0, left: 0, speed: 4, picking: false }
@@ -139,7 +142,7 @@ function QuickTrade({ session, precision, onMessage }: { session: TradingSession
 }
 
 const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
-  const { config, theme, chartType, active, session, onActivate, onReplay, onMessage, onDrawings, onContext, onAlert } = props
+  const { config, theme, chartType, active, session, onActivate, onReplay, onMessage, onDrawings, onContext, onAlert, onEditAlert } = props
   const box = useRef<HTMLDivElement>(null)
   const head = useRef<HTMLSpanElement>(null)
   const chart = useRef<Chart | null>(null)
@@ -151,8 +154,10 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
   // État impératif (aucun re-rendu React pendant la lecture ou le temps réel).
   const cfg = useRef(config)
   cfg.current = config
-  const cb = useRef({ onReplay, onMessage, onActivate, onDrawings, onContext, onAlert, session, active })
-  cb.current = { onReplay, onMessage, onActivate, onDrawings, onContext, onAlert, session, active }
+  const cb = useRef({ onReplay, onMessage, onActivate, onDrawings, onContext, onAlert, onEditAlert, session, active })
+  cb.current = { onReplay, onMessage, onActivate, onDrawings, onContext, onAlert, onEditAlert, session, active }
+  const [plus, setPlus] = useState<{ x: number; y: number } | null>(null) // bouton « + » de l'échelle de prix
+  const plusRaf = useRef(0)
   const drawings = useRef(new Map<string, string>())      // id -> nom de l'outil
   const indicatorPanes = useRef(new Map<string, string>()) // indicateur -> id de fenêtre
   const flags = useRef({ magnet: false, lock: false, visible: true, keep: false })
@@ -552,8 +557,32 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       key = k
       c.removeOverlay({ groupId: 'alert' })
       const d = cfg.current.precision
-      mine.forEach((a) => priceLine('alert', a.price, `🔔 ${a.price.toFixed(d)}${a.active ? '' : ' (en pause)'}`, a.active ? ALERT_COLOR : '#787b86', false,
-        (v) => alerts.update(a.id, { price: v })))
+      const word: Record<string, string> = { cross: 'Croisement', above: 'Au-dessus de', below: 'En dessous de' }
+      mine.forEach((a) => {
+        const data = {
+          label: `${a.symbol} ${word[a.condition] ?? 'Croisement'} ${fmt(a.price, d)}${a.active ? '' : ' (en pause)'}`,
+          color: a.active ? ALERT_COLOR : '#787b86', hover: false,
+        }
+        c.createOverlay({
+          name: 'alertLine', groupId: 'alert', points: [{ timestamp: lastBar().ts, value: a.price }], extendData: data,
+          // Glisser la ligne déplace l'alerte ; le prix suivi est mis à jour à la fin du glissement.
+          onPressedMoveEnd: (e: OverlayEvent) => {
+            const v = e.overlay.points[0]?.value
+            if (v !== undefined) alerts.update(a.id, { price: Number(v.toFixed(d)) })
+            return false
+          },
+          onMouseEnter: (e: OverlayEvent) => { c.overrideOverlay({ id: e.overlay.id, extendData: { ...data, hover: true } }); return false },
+          onMouseLeave: (e: OverlayEvent) => { c.overrideOverlay({ id: e.overlay.id, extendData: { ...data, hover: false } }); return false },
+          // Corbeille : supprime l'alerte ; ailleurs sur la ligne : ouvre la modification (prix à taper).
+          onClick: (e: OverlayEvent) => {
+            if (e.figureKey === 'delete') alerts.remove(a.id)
+            else if (e.figureKey === 'label') cb.current.onEditAlert(a.id)
+            return false
+          },
+          onDoubleClick: () => { cb.current.onEditAlert(a.id); return false },
+          onRightClick: () => true,
+        })
+      })
     }
     onChange()
     return alerts.subscribe(onChange)
@@ -819,7 +848,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     const price = pt[0]?.value
     return price !== undefined && Number.isFinite(price) ? { price, timestamp: pt[0]?.timestamp } : null
   }
-  const relative = (e: React.MouseEvent): { x: number; y: number } => {
+  const relative = (e: { clientX: number; clientY: number }): { x: number; y: number } => {
     const rect = box.current!.getBoundingClientRect()
     return { x: e.clientX - rect.left, y: e.clientY - rect.top }
   }
@@ -833,6 +862,24 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     r.picking = false
     if (ts) void startReplay(ts)
     else notify(true)
+  }
+
+  /** Le « + » suit le curseur le long de l'échelle de prix (souris ou doigt). */
+  const trackPlus = (x: number, y: number): void => {
+    cancelAnimationFrame(plusRaf.current)
+    plusRaf.current = requestAnimationFrame(() => {
+      const size = chart.current?.getSize('candle_pane', 'main' as never)
+      if (!size || y < 4 || y > size.height - 4 || x < 0) setPlus(null)
+      else setPlus({ x: size.width - 22, y })
+    })
+  }
+  const openPlus = (e: React.MouseEvent): void => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!plus) return
+    const at = priceAt(plus.x - 4, plus.y)
+    const rect = box.current!.getBoundingClientRect()
+    if (at) cb.current.onContext({ x: rect.left + plus.x + 20, y: rect.top + plus.y + 12, price: at.price })
   }
 
   const onMenu = (e: React.MouseEvent): void => {
@@ -993,7 +1040,9 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
   const tradable = active && session.context.symbol === config.symbol && session.context.source === config.source
   return (
     <div className={`pane${active ? ' active' : ''}`} onMouseDownCapture={onPick} onContextMenu={onMenu}
-      onMouseMove={(e) => { pointer.current = relative(e) }} onMouseLeave={() => { pointer.current = null }}>
+      onPointerMove={(e) => { const r = relative(e); pointer.current = r; trackPlus(r.x, r.y) }}
+      onPointerDown={(e) => { if (e.pointerType !== 'mouse') { const r = relative(e); trackPlus(r.x, r.y) } }}
+      onMouseLeave={() => { pointer.current = null; cancelAnimationFrame(plusRaf.current); setPlus(null) }}>
       <div ref={box} className="pane-chart" />
       <div className="pane-head">
         <span className="ph-sym">{config.symbol}</span>
@@ -1022,6 +1071,10 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
             if (e.key === 'Escape') closeEditor(false)
           }}
           onBlur={() => closeEditor(true)} />
+      )}
+      {plus && !replay.current.picking && (
+        <button className="price-plus" style={{ left: plus.x, top: plus.y }} title="Alerte, ordre ou ligne à ce prix"
+          onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onClick={openPlus}><Icon name="plus" size={13} /></button>
       )}
       {loading && <div className="pane-loading"><span className="spinner" />Chargement…</div>}
     </div>

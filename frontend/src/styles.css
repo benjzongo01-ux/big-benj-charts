@@ -469,3 +469,13 @@ button svg { flex: none; }
 .m-app .w-row { padding: 9px 12px; font-size: 13px; }
 .m-app .a-row { padding: 11px 12px; }
 .m-app .text-editor { font-size: 16px; }
+
+/* ---------- bouton « + » de l'échelle de prix */
+.price-plus {
+  position: absolute; z-index: 7; width: 20px; height: 20px; min-width: 0; padding: 0; margin: -10px 0 0 -10px; border-radius: 50%;
+  background: var(--panel); color: var(--text); border: 1px solid var(--muted); opacity: 0.9;
+}
+.price-plus:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: #fff; opacity: 1; }
+.m-app .price-plus { width: 28px; height: 28px; margin: -14px 0 0 -14px; }
+.m-app .ctx { left: 8px !important; right: 8px; top: auto !important; bottom: 70px; min-width: 0; }
+.m-app .ctx button { padding: 12px 10px; font-size: 13.5px; white-space: normal; }

@@ -109,7 +109,7 @@ function useMobile(): boolean {
   return mobile
 }
 
-type MobileTab = 'watch' | 'chart' | 'alerts' | 'trade' | 'more'
+type MobileTab = 'watch' | 'chart' | 'trade' | 'more'
 
 /** Heure UTC en direct (une mise à jour par seconde, isolée du reste de l'écran). */
 function UtcClock(): JSX.Element {
@@ -322,6 +322,12 @@ export default function App(): JSX.Element {
     const p = price ?? pane()?.lastPrice() ?? 0
     setAlertDraft({ source: current.source, symbol: current.symbol, precision: current.precision, price: p, condition: 'cross', message: '', once: true })
   }, [closeMenus, pane, current.source, current.symbol, current.precision])
+  /** Alerte posée directement au prix choisi (comme le « + » de TradingView) : croisement, une seule fois. */
+  const quickAlert = useCallback((price: number) => {
+    closeMenus()
+    alerts.add({ source: current.source, symbol: current.symbol, precision: current.precision, price, condition: 'cross', message: '', once: true })
+    message(`Alerte créée : ${current.symbol} croise ${fmt(price, current.precision)}`)
+  }, [closeMenus, current.source, current.symbol, current.precision, message])
   const saveAlert = (d: AlertDraft): void => {
     if (d.id) alerts.update(d.id, { price: d.price, condition: d.condition, message: d.message, once: d.once, active: true })
     else alerts.add(d)
@@ -404,7 +410,9 @@ export default function App(): JSX.Element {
         else draw('horizontalStraightLine')
       } else if (e.altKey && k === 'a') {
         e.preventDefault()
-        openAlert(p?.pointerPrice())
+        const price = p?.pointerPrice()
+        if (price !== null && price !== undefined) quickAlert(price)
+        else openAlert()
       } else if (e.key === 'Delete' || e.key === 'Backspace') {
         p?.removeSelected()
       } else if (replay.active && e.key === ' ') {
@@ -417,7 +425,7 @@ export default function App(): JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [pane, draw, undo, redo, openAlert, closeMenus, replay.active, replay.playing])
+  }, [pane, draw, undo, redo, openAlert, quickAlert, closeMenus, replay.active, replay.playing])
 
   if (ready === 'boot') return <div className="splash"><span className="spinner" />Big Benj Charts</div>
   if (ready === 'login') return <Login google={google} onDone={() => { setReady('boot'); void boot() }} />
@@ -447,6 +455,30 @@ export default function App(): JSX.Element {
   // Fenêtres communes aux deux versions.
   const dialogs = (
     <>
+      {cm && (
+        <div className="ctx" style={{ left: Math.min(cm.x, window.innerWidth - 380), top: Math.min(cm.y, window.innerHeight - 220) }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => quickAlert(cm.price)}><Icon name="alarm" size={15} />Ajouter une alerte sur {current.symbol} à {p$}<em>Alt+A</em></button>
+          <div className="ctx-sep" />
+          {above ? (
+            <>
+              <button onClick={() => pending(-1, 'limit')}><Icon name="down" size={15} />Vendre {fmt(qty, 4)} {current.symbol} à {p$} limite</button>
+              <button onClick={() => pending(1, 'stop')}><Icon name="up" size={15} />Acheter {fmt(qty, 4)} {current.symbol} à {p$} stop</button>
+            </>
+          ) : (
+            <>
+              <button onClick={() => pending(1, 'limit')}><Icon name="up" size={15} />Acheter {fmt(qty, 4)} {current.symbol} à {p$} limite</button>
+              <button onClick={() => pending(-1, 'stop')}><Icon name="down" size={15} />Vendre {fmt(qty, 4)} {current.symbol} à {p$} stop</button>
+            </>
+          )}
+          <button onClick={() => { window.dispatchEvent(new CustomEvent('bbc-order', { detail: { price: cm.price } })); setChartMenu(null) }}>
+            <Icon name="orders" size={15} />Ajouter un ordre sur {current.symbol} à {p$}…
+          </button>
+          <div className="ctx-sep" />
+          <button onClick={() => { pane()?.addHorizontalLine(cm.price); setChartMenu(null) }}>
+            <Icon name="hline" size={15} />Tracer une ligne horizontale à {p$}<em>Alt+H</em>
+          </button>
+        </div>
+      )}
       {menu === 'symbol' && (
         <SymbolSearch sources={sources} current={current} watchlist={settings.watchlist} onClose={() => setMenu(null)}
           onStar={toggleWatch}
@@ -473,7 +505,7 @@ export default function App(): JSX.Element {
       draw(tool, data)
     }
     const NAV: [MobileTab, string, string][] = [
-      ['watch', 'list', 'Liste'], ['chart', 'candles', 'Graphique'], ['alerts', 'alarm', 'Alertes'], ['trade', 'orders', 'Trading'], ['more', 'more', 'Plus'],
+      ['watch', 'list', 'Liste'], ['chart', 'candles', 'Graphique'], ['trade', 'orders', 'Trading'], ['more', 'more', 'Plus'],
     ]
     return (
       <div className="m-app" onClick={closeMenus}>
@@ -517,7 +549,8 @@ export default function App(): JSX.Element {
                 chartType={settings.chartType} active session={session} onActivate={() => undefined}
                 onReplay={(s) => setReplay(s)} onMessage={message}
                 onDrawings={(source, symbol, before, after) => history.push({ kind: 'drawings', source, symbol, before, after })}
-                onContext={(at) => openAlert(at.price)} onAlert={(price) => openAlert(price)} />
+                onContext={(at) => { closeMenus(); setChartMenu(at) }} onAlert={(price) => openAlert(price)}
+                onEditAlert={(id) => { const a = alerts.alerts.find((x) => x.id === id); if (a) editAlert(a) }} />
             </div>
             <div className="range-bar m-ranges">
               {RANGES.map(([label, ms, tf]) => <button key={label} disabled={replay.active} onClick={() => setRange(ms(), tf)}>{label}</button>)}
@@ -531,7 +564,6 @@ export default function App(): JSX.Element {
                 onPick={(w) => { if (!replay.active) setPane({ source: w.source, symbol: w.symbol, precision: w.precision }); setMtab('chart') }} />
             </div>
           )}
-          {mtab === 'alerts' && <div className="m-page"><Alerts onNewAlert={() => openAlert()} onEditAlert={editAlert} /></div>}
           {mtab === 'trade' && (
             <div className="m-page">
               <BottomPanel embedded config={current} session={session} replay={replay} goTo={(ts) => { setMtab('chart'); pane()?.goTo(ts) }} onMessage={message} />
@@ -539,6 +571,7 @@ export default function App(): JSX.Element {
           )}
           {mtab === 'more' && (
             <div className="m-page m-scroll">
+              <Alerts onNewAlert={() => openAlert()} onEditAlert={editAlert} />
               <Notices />
               <Orders session={session} />
               <Sessions />
@@ -550,7 +583,7 @@ export default function App(): JSX.Element {
           {NAV.map(([id, icon, label]) => (
             <button key={id} className={mtab === id ? 'on' : ''} onClick={() => setMtab(id)}>
               <Icon name={icon} size={20} /><span>{label}</span>
-              {id === 'alerts' && alerts.alerts.some((a) => a.active) && <i className="m-dot" />}
+              {id === 'more' && alerts.unread > 0 && <i className="m-dot" />}
             </button>
           ))}
         </nav>
@@ -627,7 +660,7 @@ export default function App(): JSX.Element {
                   <button onClick={() => { update({ theme: settings.theme === 'dark' ? 'light' : 'dark' }); setSheet(null) }}>
                     <Icon name={settings.theme === 'dark' ? 'sun' : 'moon'} />Thème {settings.theme === 'dark' ? 'clair' : 'sombre'}
                   </button>
-                  <button onClick={() => { setSheet(null); setMtab('alerts') }}><Icon name="bell" />Notifications et sonnerie</button>
+                  <button onClick={() => { setSheet(null); setMtab('more') }}><Icon name="bell" />Alertes, notifications et sonnerie</button>
                   {getToken() && (
                     <button onClick={() => void (google ? signOutGoogle() : Promise.resolve(setToken(''))).then(() => location.reload())}>
                       <Icon name="logout" />Se déconnecter{google && googleEmail() ? ` (${googleEmail()})` : ''}
@@ -799,7 +832,8 @@ export default function App(): JSX.Element {
                 onActivate={() => i !== idx && !replay.active && setActiveIdx(i)}
                 onReplay={(s) => i === idx && setReplay(s)} onMessage={message}
                 onDrawings={(source, symbol, before, after) => history.push({ kind: 'drawings', source, symbol, before, after })}
-                onContext={(at) => { closeMenus(); setChartMenu(at) }} onAlert={(price) => openAlert(price)} />
+                onContext={(at) => { closeMenus(); setChartMenu(at) }} onAlert={(price) => openAlert(price)}
+                onEditAlert={(id) => { const a = alerts.alerts.find((x) => x.id === id); if (a) editAlert(a) }} />
             ))}
             <Favorites tools={layout.favorites} pos={layout.favPos} onMove={(favPos) => patchLayout({ favPos })} onDraw={draw} onMenu={openToolMenu} />
           </div>
@@ -841,30 +875,6 @@ export default function App(): JSX.Element {
         <div className="ctx" style={{ left: toolMenu.x, top: toolMenu.y }} onClick={(e) => e.stopPropagation()}>
           <button onClick={() => toggleFavorite(toolMenu.tool)}>
             <Icon name="star" size={15} />{layout.favorites.includes(toolMenu.tool) ? 'Retirer des favoris' : 'Ajouter aux favoris'}
-          </button>
-        </div>
-      )}
-      {cm && (
-        <div className="ctx" style={{ left: Math.min(cm.x, window.innerWidth - 380), top: Math.min(cm.y, window.innerHeight - 220) }} onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => openAlert(cm.price)}><Icon name="alarm" size={15} />Ajouter une alerte sur {current.symbol} à {p$}<em>Alt+A</em></button>
-          <div className="ctx-sep" />
-          {above ? (
-            <>
-              <button onClick={() => pending(-1, 'limit')}><Icon name="down" size={15} />Vendre {fmt(qty, 4)} {current.symbol} à {p$} limite</button>
-              <button onClick={() => pending(1, 'stop')}><Icon name="up" size={15} />Acheter {fmt(qty, 4)} {current.symbol} à {p$} stop</button>
-            </>
-          ) : (
-            <>
-              <button onClick={() => pending(1, 'limit')}><Icon name="up" size={15} />Acheter {fmt(qty, 4)} {current.symbol} à {p$} limite</button>
-              <button onClick={() => pending(-1, 'stop')}><Icon name="down" size={15} />Vendre {fmt(qty, 4)} {current.symbol} à {p$} stop</button>
-            </>
-          )}
-          <button onClick={() => { window.dispatchEvent(new CustomEvent('bbc-order', { detail: { price: cm.price } })); setChartMenu(null) }}>
-            <Icon name="orders" size={15} />Ajouter un ordre sur {current.symbol} à {p$}…
-          </button>
-          <div className="ctx-sep" />
-          <button onClick={() => { pane()?.addHorizontalLine(cm.price); setChartMenu(null) }}>
-            <Icon name="hline" size={15} />Tracer une ligne horizontale à {p$}<em>Alt+H</em>
           </button>
         </div>
       )}

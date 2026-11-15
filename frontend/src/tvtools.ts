@@ -287,9 +287,43 @@ export function positionPoints(name: string, entry: { dataIndex: number; value: 
   return [at(entry.dataIndex, entry.value), at(right, entry.value), at(entry.dataIndex, entry.value + side * dist), at(entry.dataIndex, entry.value - side * dist)]
 }
 
+/** Ligne d'alerte : pointillés fins, rond à droite ; au survol, « SYMBOLE Croisement prix » et une corbeille. */
+export interface AlertLineData { label: string; color: string; hover: boolean }
+const alertLine: OverlayTemplate = {
+  name: 'alertLine', totalStep: 2, needDefaultPointFigure: false, needDefaultXAxisFigure: false, needDefaultYAxisFigure: true,
+  createPointFigures: ({ overlay, coordinates: c, bounding }) => {
+    if (c.length < 1) return []
+    const d = (overlay.extendData ?? { label: '', color: '#f5b800', hover: false }) as AlertLineData
+    const y = c[0].y
+    const right = bounding.width - 26
+    const figures: OverlayFigure[] = [
+      { type: 'line', attrs: { coordinates: [{ x: 0, y }, { x: bounding.width, y }] }, styles: { color: d.color, size: 1, style: 'dashed', dashedValue: [4, 3] } },
+      // Zone de prise plus large que le trait, pour attraper la ligne facilement (souris ou doigt).
+      { type: 'line', attrs: { coordinates: [{ x: 0, y }, { x: bounding.width, y }] }, styles: { color: 'rgba(0,0,0,0.001)', size: 12, style: 'solid' } },
+      { type: 'circle', attrs: { x: right, y, r: 4 }, styles: { style: 'stroke_fill', color: '#131722', borderColor: d.color, borderSize: 1.5 } },
+    ]
+    if (d.hover) {
+      const x = Math.max(8, bounding.width * 0.32)
+      figures.push(
+        {
+          type: 'text', key: 'label',
+          attrs: { x, y, text: d.label, align: 'left', baseline: 'middle' },
+          styles: { color: '#d1d4dc', backgroundColor: '#131722', borderColor: d.color, borderSize: 1, borderRadius: 3, size: 11, paddingLeft: 6, paddingRight: 22, paddingTop: 3, paddingBottom: 3 },
+        },
+        {
+          type: 'text', key: 'delete',
+          attrs: { x: x + d.label.length * 6.2 + 12, y, text: '🗑', align: 'left', baseline: 'middle' },
+          styles: { color: '#d1d4dc', backgroundColor: 'transparent', size: 11, paddingLeft: 2, paddingRight: 2, paddingTop: 2, paddingBottom: 2 },
+        },
+      )
+    }
+    return figures
+  },
+}
+
 let done = false
 export function registerTvTools(): void {
   if (done) return
   done = true
-  ;[trendLine, path, textNote, positionTemplate('longPosition'), positionTemplate('shortPosition')].forEach(registerOverlay)
+  ;[trendLine, path, textNote, positionTemplate('longPosition'), positionTemplate('shortPosition'), alertLine].forEach(registerOverlay)
 }
