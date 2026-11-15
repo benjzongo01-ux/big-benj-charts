@@ -4,7 +4,7 @@ import { api } from './api'
 import { firebaseApp, type FirebaseWebConfig } from './google'
 
 /** local = version sans serveur de notifications ; unsupported = navigateur incompatible. */
-export type PushStatus = 'local' | 'unsupported' | 'denied' | 'off' | 'on'
+export type PushStatus = 'local' | 'unsupported' | 'denied' | 'off' | 'on' | 'native'
 
 interface InstallPrompt extends Event { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> }
 
@@ -13,6 +13,25 @@ let online = false       // le serveur sait envoyer des notifications
 let supported = false    // ce navigateur sait en recevoir
 let token = ''
 let installPrompt: InstallPrompt | null = null
+
+// Application Android : elle transmet l'identifiant de notification du téléphone dans l'adresse d'ouverture.
+// Il est gardé dans ce navigateur puis retiré de l'adresse.
+const NATIVE_KEY = 'bbc_native_token'
+let nativeToken = ''
+let nativeOk = false
+try {
+  const url = new URL(location.href)
+  const fromApp = url.searchParams.get('native_token')
+  if (fromApp) {
+    localStorage.setItem(NATIVE_KEY, fromApp)
+    url.searchParams.delete('native_token')
+    history.replaceState(null, '', url.pathname + url.search + url.hash)
+  }
+  nativeToken = localStorage.getItem(NATIVE_KEY) ?? ''
+} catch {
+  /* stockage indisponible */
+}
+export const isNativeApp = (): boolean => nativeToken !== ''
 const listeners = new Set<() => void>()
 const changed = (): void => listeners.forEach((fn) => fn())
 
@@ -33,6 +52,16 @@ async function register(): Promise<void> {
 
 /** Au démarrage : installe le service worker, écoute les alertes reçues au premier plan, réinscrit l'appareil. */
 export async function initPush(config: FirebaseWebConfig | null, onAlert: (body: string, tag: string) => void): Promise<void> {
+  // Téléphone avec l'application : le serveur fera sonner l'alarme native, sans passer par le navigateur.
+  if (nativeToken && config) {
+    try {
+      await api('/api/push/token', 'POST', { token: nativeToken, native: true })
+      nativeOk = true
+      changed()
+    } catch {
+      /* serveur injoignable : nouvel essai à la prochaine ouverture */
+    }
+  }
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault()
     installPrompt = e as InstallPrompt
@@ -59,6 +88,7 @@ export async function initPush(config: FirebaseWebConfig | null, onAlert: (body:
 }
 
 export function pushStatus(): PushStatus {
+  if (nativeOk) return 'native'
   if (!online) return 'local'
   if (!supported) return 'unsupported'
   if (Notification.permission === 'denied') return 'denied'

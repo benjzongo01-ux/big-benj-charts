@@ -111,6 +111,7 @@ function DeviceBlock(): JSX.Element | null {
   if (status === 'local' && !canInstall()) return null
   return (
     <div className="device">
+      {status === 'native' && <div className="device-state"><span className="dot on" />Sonnerie d’alarme activée sur ce téléphone : il sonne en boucle quand une alerte est atteinte, même application fermée, jusqu’à ce que tu touches la notification.</div>}
       {status === 'on' && <div className="device-state"><span className="dot on" />Cet appareil sonne quand une alerte est atteinte, même application fermée.</div>}
       {status === 'off' && (
         <>
@@ -122,7 +123,7 @@ function DeviceBlock(): JSX.Element | null {
       )}
       {status === 'denied' && <div className="device-state"><span className="dot bad" />Notifications bloquées pour ce site. Autorise-les dans les réglages du navigateur (icône à gauche de l’adresse), puis recharge la page.</div>}
       {status === 'unsupported' && <div className="device-state"><span className="dot" />Ce navigateur ne sait pas recevoir de notifications. Utilise Chrome, ou installe l’application.</div>}
-      {status === 'on' && (
+      {(status === 'on' || status === 'native') && (
         <button disabled={busy} onClick={() => void run(async () => {
           const r = await testPush()
           return r.sent ? `Notification d’essai envoyée à ${r.sent} appareil${r.sent > 1 ? 's' : ''}. Passe sur une autre application pour la voir arriver.` : 'Aucun appareil inscrit pour le moment.'

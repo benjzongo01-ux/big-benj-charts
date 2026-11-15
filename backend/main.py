@@ -318,13 +318,13 @@ def alerts_delete(alert_id: str, user_id: auth.UserId = User) -> list:
 
 
 @app.post("/api/push/token")
-def push_register(token: str = Body(..., embed=True), user_id: auth.UserId = User) -> dict:
-    """Enregistre cet appareil pour recevoir les alertes en notification."""
+def push_register(token: str = Body(..., embed=True), native: bool = Body(False, embed=True), user_id: auth.UserId = User) -> dict:
+    """Enregistre cet appareil pour recevoir les alertes (navigateur, ou application Android avec sonnerie d'alarme)."""
     if not FIREBASE_ENABLED:
         return {"ok": False, "devices": 0}
     if not (20 < len(token) < 4096):
         raise HTTPException(400, "Jeton de notification invalide.")
-    alerts.add_token(user_id, token)
+    alerts.add_token(user_id, (alerts.NATIVE + token) if native else token)
     return {"ok": True, "devices": alerts.device_count(user_id)}
 
 

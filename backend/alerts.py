@@ -24,6 +24,8 @@ from .config import FIREBASE_ENABLED
 
 log = logging.getLogger("alertes")
 MAX_ALERTS = 200
+#: Préfixe des appareils inscrits par l'application Android (sonnerie native).
+NATIVE = "android:"
 FIELDS = {"id": str, "source": str, "symbol": str, "precision": int, "price": float, "condition": str,
           "message": str, "once": bool, "active": bool, "createdAt": float, "triggeredAt": float}
 CONDITIONS = {"cross": "croise", "above": "passe au-dessus de", "below": "passe en dessous de"}
@@ -121,13 +123,18 @@ def send_push(user_id, title: str, body: str, tag: str) -> int:
 
     from . import firebase_app
 
-    message = messaging.MulticastMessage(
-        tokens=tokens,
-        # Message « données » : c'est notre service worker qui affiche la notification (titre, vibration, clic).
-        data={"title": title, "body": body, "tag": tag, "url": "/"},
-        webpush=messaging.WebpushConfig(headers={"Urgency": "high", "TTL": "3600"}),
-    )
-    result = messaging.send_each_for_multicast(message, app=firebase_app.app())
+    data = {"title": title, "body": body, "tag": tag, "url": "/"}
+    messages = []
+    for token in tokens:
+        if token.startswith(NATIVE):
+            # Application Android : message prioritaire, la partie native fait sonner l'alarme.
+            messages.append(messaging.Message(token=token[len(NATIVE):], data=data,
+                                              android=messaging.AndroidConfig(priority="high", ttl=3600)))
+        else:
+            # Navigateur : c'est notre service worker qui affiche la notification (titre, vibration, clic).
+            messages.append(messaging.Message(token=token, data=data,
+                                              webpush=messaging.WebpushConfig(headers={"Urgency": "high", "TTL": "3600"})))
+    result = messaging.send_each(messages, app=firebase_app.app())
     sent = 0
     for token, response in zip(tokens, result.responses):
         if response.success:

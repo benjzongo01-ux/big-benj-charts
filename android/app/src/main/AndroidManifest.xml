@@ -3,6 +3,9 @@
 
     <!-- Nécessaire à partir d'Android 13 pour afficher les alertes de prix. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Afficher l'alerte par-dessus l'écran verrouillé, comme un réveil. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:allowBackup="true"
@@ -41,11 +44,6 @@
                 android:name="android.support.customtabs.trusted.SCREEN_ORIENTATION"
                 android:value="default" />
 
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-
             <!-- Les liens vers le site s'ouvrent dans l'application. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
@@ -56,6 +54,32 @@
                     android:scheme="https" />
             </intent-filter>
         </activity>
+
+        <!-- Écran de démarrage : récupère l'identifiant de notification puis ouvre le site. -->
+        <activity
+            android:name=".StartActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Réception des alertes du serveur et sonnerie d'alarme. -->
+        <service
+            android:name=".AlarmService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+        <receiver android:name=".StopReceiver" android:exported="false" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="alertes_prix_alarme" />
 
         <activity android:name="com.google.androidbrowserhelper.trusted.FocusActivity" />
 
