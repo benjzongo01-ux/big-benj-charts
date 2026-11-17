@@ -46,6 +46,8 @@ export const LINE_TOOLS = new Set(['segment'])
 export const drawProps = new Map<string, DrawProps>()
 /** Bougies du graphique qui porte chaque dessin (pour le résultat des positions). */
 export const drawData = new Map<string, () => KLineData[]>()
+/** Dessins sélectionnés : les positions n'affichent leurs textes (montants, stop, cible) que dans ce cas. */
+export const selectedDrawings = new Set<string>()
 
 export function rgba(hex: string, alpha = 1): string {
   if (!/^#[0-9a-f]{6}$/i.test(hex)) return hex
@@ -248,10 +250,15 @@ function positionTemplate(name: 'longPosition' | 'shortPosition'): OverlayTempla
       const tLabel = `Cible: ${fmtPrice(reward, d)} (${pct(reward)}%) ${Math.round(reward / tick)}, Montant: ${fmtPrice(account + riskAmount * rr, 2)}`
       const sLabel = `Stop: ${fmtPrice(risk, d)} (${pct(risk)}%) ${Math.round(risk / tick)}, Montant: ${fmtPrice(account - riskAmount, 2)}`
       const pnlColor = res.pnl >= 0 ? green : red
-      return [
+      const shapes: OverlayFigure[] = [
         box(yT, green),
         box(yS, red),
         { type: 'line', ignoreEvent: true, attrs: { coordinates: [{ x: x0, y: yE }, { x: x1, y: yE }] }, styles: { color: '#787b86', size: 1, style: 'solid' } },
+      ]
+      // Hors sélection, seule la position reste visible : les textes n'apparaissent qu'au clic sur l'outil.
+      if (!selectedDrawings.has(overlay.id)) return shapes
+      return [
+        ...shapes,
         tag(mid, side === 1 ? above(yT, yE) - 4 : below(yT, yE) + 4, tLabel, green, 'center', side === 1 ? 'bottom' : 'top'),
         tag(mid, side === 1 ? below(yS, yE) + 4 : above(yS, yE) - 4, sLabel, red, 'center', side === 1 ? 'top' : 'bottom'),
         tag(mid, yE + 10, `P&L ${res.closed ? 'fermé' : 'ouvert'}: ${fmtPrice(res.pnl, 2)}, Qté: ${qty}`, pnlColor, 'center', 'middle'),

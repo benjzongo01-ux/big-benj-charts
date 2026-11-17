@@ -9,7 +9,7 @@ import { findTool, INDICATORS, registerTools, TEXT_TOOLS } from './overlays'
 import type { TradingSession } from './session'
 import { alerts, quotes, type PaneConfig } from './stores'
 import {
-  DEFAULT_PROPS, drawData, drawProps, INLINE_TEXT_TOOLS, libraryStyles, pathName, POSITION_TOOLS, positionPoints, type DrawProps,
+  DEFAULT_PROPS, drawData, drawProps, INLINE_TEXT_TOOLS, libraryStyles, pathName, POSITION_TOOLS, positionPoints, selectedDrawings, type DrawProps,
 } from './tvtools'
 
 export type { PaneConfig }
@@ -435,11 +435,14 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     },
     onSelected: (e: OverlayEvent) => {
       selected.current = e.overlay.id
+      selectedDrawings.clear()
+      selectedDrawings.add(e.overlay.id)
       if (drawings.current.has(e.overlay.id)) setSel({ id: e.overlay.id, name: drawings.current.get(e.overlay.id) ?? e.overlay.name, v: 0 })
       return false
     },
-    onDeselected: () => {
+    onDeselected: (e: OverlayEvent) => {
       selected.current = null
+      selectedDrawings.delete(e.overlay.id)
       setSel(null)
       return false
     },
@@ -449,6 +452,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     },
     onRemoved: (e: OverlayEvent) => {
       drawings.current.delete(e.overlay.id)
+      selectedDrawings.delete(e.overlay.id)
       drawProps.delete(e.overlay.id)
       drawData.delete(e.overlay.id)
       setSel((s) => (s?.id === e.overlay.id ? null : s))
