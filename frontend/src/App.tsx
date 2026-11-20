@@ -191,7 +191,7 @@ export default function App(): JSX.Element {
   const [alertDraft, setAlertDraft] = useState<AlertDraft | null>(null)
   const [indicators, setIndicators] = useState<string[]>(settings.indicators)
   const [flags, setFlags] = useState({ magnet: false, lock: false, visible: true, keep: false })
-  const [replay, setReplay] = useState<ReplayState>({ active: false, playing: false, time: 0, left: 0, speed: 4, picking: false })
+  const [replay, setReplay] = useState<ReplayState>({ active: false, playing: false, time: 0, left: 0, speed: 4, picking: false, rewinding: false })
   const [replayOpen, setReplayOpen] = useState(false)
   const [replayDate, setReplayDate] = useState('')
   const [gotoOpen, setGotoOpen] = useState(false)
@@ -376,6 +376,13 @@ export default function App(): JSX.Element {
     void pane()?.goToDate(new Date(gotoDate).getTime())
     setGotoOpen(false)
   }
+  /** Bouton Replay : ouvre le replay ; pendant un replay, un nouveau clic l'arrête et ramène au temps réel. */
+  const toggleReplay = (): void => {
+    if (replay.active || replay.picking) {
+      pane()?.exitReplay()
+      setReplayOpen(false)
+    } else setReplayOpen(!replayOpen)
+  }
   const startReplay = (): void => {
     if (!replayDate) {
       message('Choisis une date de départ, ou clique sur le graphique.', 'info')
@@ -427,6 +434,9 @@ export default function App(): JSX.Element {
       } else if (replay.active && e.key === 'ArrowRight') {
         e.preventDefault()
         p?.step()
+      } else if (replay.active && e.key === 'ArrowLeft') {
+        e.preventDefault()
+        p?.stepBack()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -539,8 +549,10 @@ export default function App(): JSX.Element {
           <div className="replay-bar m-replay">
             {replay.active ? (
               <>
+                <button className="icon" onClick={() => pane()?.stepBack()} title="Une bougie en arrière"><Icon name="rewind" size={15} /></button>
                 <button className="primary" onClick={() => pane()?.play(!replay.playing)}>{replay.playing ? 'Pause' : 'Lecture'}</button>
                 <button onClick={() => pane()?.step()}>+1 bougie</button>
+                <button className={replay.rewinding ? 'on' : ''} onClick={() => pane()?.pickRewind()}>{replay.rewinding ? 'Touche une bougie…' : 'Revenir à…'}</button>
                 <select value={replay.speed} onChange={(e) => pane()?.setSpeed(Number(e.target.value))}>
                   {SPEEDS.map((s) => <option key={s} value={s}>{s}/s</option>)}
                 </select>
@@ -670,7 +682,7 @@ export default function App(): JSX.Element {
               )}
               {sheet === 'more' && (
                 <div className="m-list m-menu">
-                  <button onClick={() => { setSheet(null); setReplayOpen(true); setMtab('chart') }}><Icon name="rewind" />Replay</button>
+                  <button onClick={() => { setSheet(null); if (replay.active || replay.picking) toggleReplay(); else setReplayOpen(true); setMtab('chart') }}><Icon name="rewind" />{replay.active ? 'Arrêter le replay' : 'Replay'}</button>
                   <button onClick={() => { redo(); setSheet(null) }} disabled={!history.canRedo}><Icon name="redo" />Rétablir</button>
                   <button onClick={() => { pane()?.screenshot(); setSheet(null) }}><Icon name="camera" />Capture du graphique</button>
                   <button onClick={() => { update({ theme: settings.theme === 'dark' ? 'light' : 'dark' }); setSheet(null) }}>
@@ -731,7 +743,7 @@ export default function App(): JSX.Element {
           )}
         </div>
         <button onClick={() => openAlert()} title="Créer une alerte de prix (Alt+A)"><Icon name="alarm" size={16} /> Alerte</button>
-        <button className={replayOpen || replay.active ? 'on' : ''} onClick={() => setReplayOpen(!replayOpen)} title="Rejouer le marché bougie par bougie">
+        <button className={replayOpen || replay.active ? 'on' : ''} onClick={toggleReplay} title={replay.active ? 'Arrêter le replay et revenir au temps réel' : 'Rejouer le marché bougie par bougie'}>
           <Icon name="rewind" size={16} /> Replay
         </button>
         <span className="vsep" />
@@ -771,8 +783,13 @@ export default function App(): JSX.Element {
             </>
           ) : (
             <>
+              <button onClick={() => pane()?.stepBack()} title="Flèche gauche">Bougie précédente</button>
               <button className="primary" onClick={() => pane()?.play(!replay.playing)} title="Espace">{replay.playing ? 'Pause' : 'Lecture'}</button>
               <button onClick={() => pane()?.step()} title="Flèche droite">Bougie suivante</button>
+              <button className={replay.rewinding ? 'on' : ''} onClick={() => pane()?.pickRewind()}
+                title="Revenir en arrière : clique ensuite sur la bougie où reprendre le replay">
+                {replay.rewinding ? 'Clique sur une bougie passée…' : 'Revenir à…'}
+              </button>
               <label>Vitesse
                 <select value={replay.speed} onChange={(e) => pane()?.setSpeed(Number(e.target.value))}>
                   {SPEEDS.map((s) => <option key={s} value={s}>{s} bougies/s</option>)}

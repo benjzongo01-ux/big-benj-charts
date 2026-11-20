@@ -21,6 +21,8 @@ export interface ReplayState {
   left: number
   speed: number
   picking: boolean
+  /** Replay : on attend le clic sur la bougie passée où revenir. */
+  rewinding: boolean
 }
 
 export interface SavedDrawing {
@@ -58,6 +60,10 @@ export interface PaneHandle {
   exitReplay: () => void
   play: (on: boolean) => void
   step: () => void
+  /** Replay : une bougie en arrière. */
+  stepBack: () => void
+  /** Replay : attendre un clic sur la bougie passée où revenir (nouvel appel = annuler). */
+  pickRewind: () => void
   setSpeed: (barsPerSecond: number) => void
 }
 
@@ -82,7 +88,7 @@ interface Props {
   onEditAlert: (id: string) => void
 }
 
-const IDLE: ReplayState = { active: false, playing: false, time: 0, left: 0, speed: 4, picking: false }
+const IDLE: ReplayState = { active: false, playing: false, time: 0, left: 0, speed: 4, picking: false, rewinding: false }
 const REPLAY_MAX_BARS = 60_000
 const ALERT_COLOR = '#f5b800'
 
@@ -236,7 +242,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
   const pendingRange = useRef<number | null>(null)
   const stopStream = useRef<(() => void) | null>(null)
   const replay = useRef({
-    active: false, playing: false, bars: [] as Bar[], idx: 0, speed: 4, acc: 0, last: 0, raf: 0, picking: false, notified: 0,
+    active: false, playing: false, bars: [] as Bar[], idx: 0, speed: 4, acc: 0, last: 0, raf: 0, picking: false, rewinding: false, notified: 0,
     tf: '1h', now: 0, partial: null as Bar | null, // unité du replay, instant simulé, bougie en cours de formation
   })
 
@@ -815,7 +821,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     if (!force && now - r.notified < 120) return // au plus ~8 mises à jour de l'interface par seconde
     r.notified = now
     cb.current.onReplay({
-      active: r.active, playing: r.playing, speed: r.speed, picking: r.picking,
+      active: r.active, playing: r.playing, speed: r.speed, picking: r.picking, rewinding: r.active && r.rewinding,
       time: r.active ? r.now : 0, left: r.active ? r.bars.length - r.idx : 0, // heure simulée = fin de la dernière bougie révélée
     })
   }
@@ -854,11 +860,35 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     if (r.playing) r.raf = requestAnimationFrame(frame)
   }
 
+  /** Replay : revient en arrière, la bougie `idx` - 1 devient la dernière affichée (les suivantes sont de nouveau cachées). */
+  const rewindTo = (idx: number): void => {
+    const r = replay.current
+    const c = chart.current
+    if (!c || !r.active) return
+    const target = Math.max(1, Math.min(idx, r.idx))
+    r.rewinding = false
+    if (target >= r.idx && !r.partial) {
+      notify(true)
+      return
+    }
+    r.playing = false
+    cancelAnimationFrame(r.raf)
+    Object.assign(r, { idx: target, acc: 0, partial: null, now: r.bars[target - 1].timestamp + TF_MS[r.tf] })
+    c.applyNewData(r.bars.slice(0, target), false)
+    c.scrollToRealTime()
+    showLast()
+    const last = r.bars[target - 1]
+    const s = cb.current.session
+    s.price = last.close
+    s.time = last.timestamp
+    notify(true)
+  }
+
   function stopReplay(reloadLive: boolean): void {
     const r = replay.current
     cancelAnimationFrame(r.raf)
     const was = r.active || r.picking
-    Object.assign(r, { active: false, playing: false, bars: [], idx: 0, picking: false, partial: null })
+    Object.assign(r, { active: false, playing: false, bars: [], idx: 0, picking: false, rewinding: false, partial: null })
     if (was) cb.current.onReplay({ ...IDLE, speed: r.speed })
     if (was && reloadLive) setReload((n) => n + 1)
   }
@@ -881,7 +911,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       stopStream.current = null
       const r = replay.current
       cancelAnimationFrame(r.raf)
-      Object.assign(r, { active: true, playing: false, bars, idx, acc: 0, picking: false, tf, now: bars[idx - 1].timestamp + step, partial: null })
+      Object.assign(r, { active: true, playing: false, bars, idx, acc: 0, picking: false, rewinding: false, tf, now: bars[idx - 1].timestamp + step, partial: null })
       c.applyNewData(bars.slice(0, idx), false)
       c.scrollToRealTime()
       showLast()
@@ -976,6 +1006,19 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
     onActivate()
     if (selAlert && !(e.target as HTMLElement).closest('.alert-bar')) setSelAlert(null)
     const r = replay.current
+    if (r.rewinding && e.button === 0) {
+      // « Revenir à… » : la bougie cliquée devient la dernière affichée.
+      const { x, y } = relative(e)
+      const ts = priceAt(x, y)?.timestamp
+      if (ts === undefined) {
+        r.rewinding = false
+        notify(true)
+        return
+      }
+      const after = r.bars.findIndex((b) => b.timestamp > ts)
+      rewindTo(after < 0 ? r.idx : after)
+      return
+    }
     if (!r.picking || e.button !== 0) return
     const { x, y } = relative(e)
     const ts = priceAt(x, y)?.timestamp
@@ -1030,8 +1073,9 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
         drawingId.current = null
         chart.current?.removeOverlay(id)
       }
-      if (replay.current.picking) {
+      if (replay.current.picking || replay.current.rewinding) {
         replay.current.picking = false
+        replay.current.rewinding = false
         notify(true)
       }
     },
@@ -1149,6 +1193,15 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
       }
       notify(true)
     },
+    stepBack: () => rewindTo(replay.current.idx - 1),
+    pickRewind: () => {
+      const r = replay.current
+      if (!r.active) return
+      r.playing = false
+      cancelAnimationFrame(r.raf)
+      r.rewinding = !r.rewinding
+      notify(true)
+    },
     step: () => {
       if (!stepOnce()) cb.current.onMessage('Fin des données du replay.', 'info')
       if (!hovering.current) showLast()
@@ -1224,7 +1277,7 @@ const ChartPane = forwardRef<PaneHandle, Props>(function ChartPane(props, ref) {
           </div>
         )
       })()}
-      {plus && !replay.current.picking && (
+      {plus && !replay.current.picking && !replay.current.rewinding && (
         <button className="price-plus" style={{ left: plus.x, top: plus.y }} title="Alerte, ordre ou ligne à ce prix"
           onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()} onClick={openPlus}><Icon name="plus" size={13} /></button>
       )}
